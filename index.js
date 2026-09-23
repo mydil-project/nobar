@@ -1,7 +1,7 @@
 import { db, auth, provider } from './firebase.js';
 import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint } from './utils.js';
 import {
-  ref, onValue, onChildAdded, push, update, get, serverTimestamp, onDisconnect as fbOnDisconnect
+  ref, onValue, onChildAdded, onChildRemoved, push, update, get, serverTimestamp, onDisconnect as fbOnDisconnect, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import {
   signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged
@@ -27,6 +27,8 @@ const viewerListSection = $('viewerListSection');
 const chatMessages = $('chatMessages');
 const chatInput = $('chatInput');
 const btnChatSend = $('btnChatSend');
+const chatEls = new Map();
+let chatSending = false;
 const nextFilmBar = $('nextFilmBar');
 const nextFilmBarTitle = $('nextFilmBarTitle');
 const nextFilmBarCountdown = $('nextFilmBarCountdown');
@@ -53,6 +55,7 @@ let watchMode = 'sync';
 let pendingAsyncPos = null;
 let asyncActiveId = null;
 let asyncGapId = null;
+let lastAsyncPlayTry = 0;
 
 // ===== HELPERS =====
 function isYoutubeUrl(url) {
@@ -143,10 +146,15 @@ btnLogin.addEventListener('click', async () => {
 onAuthStateChanged(auth, user => {
   if (user) {
     currentUser = user;
-    registerViewer(user);
+    registerViewer(user).catch(e => console.error('Gagal register viewer:', e));
     loginScreen.classList.add('hidden');
     userPage.classList.remove('hidden');
-    userPhoto.src = user.photoURL || '';
+    if (user.photoURL) {
+      userPhoto.style.display = '';
+      userPhoto.src = user.photoURL;
+    } else {
+      userPhoto.style.display = 'none';
+    }
     userName.textContent = user.displayName || 'Penonton';
     initAll();
     showFullscreenHint();
@@ -280,6 +288,8 @@ function stopVideoElements() {
 }
 
 function loadVideo(url) {
+  hidePlayOverlay();
+
   if (!url) {
     stopVideoElements();
     userVideoPlayer.style.display = 'none';
@@ -361,7 +371,8 @@ function applyPlaybackAfterLoad() {
     applyAsyncAfterLoad();
     return;
   }
-  if (userVideoPlayer.paused) tryPlay();
+  if (currentState.playing) tryPlay();
+  else syncPlayback(true);
 }
 
 // ===== SINKRONISASI DENGAN HOST =====
@@ -392,7 +403,7 @@ function syncPlayback(force = false) {
       const drift = Math.abs(userVideoPlayer.currentTime - pos);
 
       // Host pause sudah jalan → user mengikuti (termasuk lompat menit bila drift)
-      if (pos >= 0 && pos < userVideoPlayer.duration && (force || drift > 2)) {
+      if (pos >= 0 && pos < userVideoPlayer.duration && (force || drift > 1)) {
         userVideoPlayer.currentTime = pos;
       }
     }
@@ -400,7 +411,7 @@ function syncPlayback(force = false) {
     if (!userVideoPlayer.paused) userVideoPlayer.pause();
     if (canSeek && srcReady) {
       const target = state.videoPosition || 0;
-      if (force || Math.abs(userVideoPlayer.currentTime - target) > 2) {
+      if (force || Math.abs(userVideoPlayer.currentTime - target) > 1) {
         userVideoPlayer.currentTime = target;
       }
     }
@@ -410,7 +421,7 @@ function syncPlayback(force = false) {
 // ===== MODE SYNC/ASYNC (diatur host via settings/syncMode) =====
 function renderViewerModeBadge() {
   const isAsync = watchMode === 'async';
-  viewerModeBadge.textContent = isAsync ? '● Mandiri (jadwal)' : '● Sinkron host';
+  viewerModeBadge.textContent = isAsync ? '● Async' : '● Sync';
   viewerModeBadge.classList.toggle('sync', !isAsync);
   viewerModeBadge.classList.toggle('async', isAsync);
 }
@@ -528,11 +539,12 @@ function tickAsync() {
       enterAsyncGap(active.id);
       return;
     }
-    if (Math.abs(userVideoPlayer.currentTime - pos) > 2) {
+    if (Math.abs(userVideoPlayer.currentTime - pos) > 1) {
       userVideoPlayer.currentTime = pos;
     }
   }
-  if (userVideoPlayer.paused && userVideoPlayer.src) {
+  if (userVideoPlayer.paused && userVideoPlayer.src && Date.now() - lastAsyncPlayTry > 3000) {
+    lastAsyncPlayTry = Date.now();
     tryPlay();
   }
 }
@@ -543,6 +555,17 @@ function listenState() {
     currentState = state;
 
     if (watchMode === 'async') return;
+
+    if (!state.currentUrl) {
+      lastLoadedUrl = '';
+      initialSeekDone = false;
+      stopVideoElements();
+      userVideoPlayer.style.display = 'none';
+      hideYoutubeFrame();
+      userNoVideo.classList.remove('hidden');
+      userNowTitle.textContent = 'Menunggu host...';
+      return;
+    }
 
     if (state.currentUrl && state.currentUrl !== lastLoadedUrl) {
       lastLoadedUrl = state.currentUrl;
@@ -632,14 +655,17 @@ function initViewers() {
     Object.values(users).forEach(u => {
       if (!u.online) return;
       count++;
+      const photoHtml = u.photo
+        ? '<img src="' + escapeHtml(u.photo) + '" alt="">'
+        : '<div class="message-avatar">' + escapeHtml(String(u.name || '?').charAt(0).toUpperCase()) + '</div>';
       if (u.role === 'host') {
         hostHtml = '<div class="viewer-item-host">' +
-          '<img src="' + escapeHtml(u.photo || '') + '" alt="">' +
+          photoHtml +
           '<span class="name">' + escapeHtml(u.name) + '</span>' +
           '<span class="badge">HOST</span></div>';
       } else {
         userHtml += '<div class="viewer-item">' +
-          '<img src="' + escapeHtml(u.photo || '') + '" alt="">' +
+          photoHtml +
           '<span class="name">' + escapeHtml(u.name) + '</span>' +
           '<span class="online-dot"></span></div>';
       }
@@ -658,16 +684,28 @@ function initChat() {
   btnChatSend.addEventListener('click', sendChat);
   chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
 
-  onChildAdded(ref(db, 'chat'), snap => {
+  const chatQuery = query(ref(db, 'chat'), limitToLast(200));
+
+  onChildAdded(chatQuery, snap => {
     const msg = snap.val();
-    if (msg) addChatMessage(msg);
+    if (msg) addChatMessage(msg, snap.key);
+  });
+
+  onChildRemoved(chatQuery, snap => {
+    const el = chatEls.get(snap.key);
+    if (el) {
+      el.remove();
+      chatEls.delete(snap.key);
+    }
   });
 }
 
 async function sendChat() {
   const text = chatInput.value.trim();
-  if (!text || !currentUser) return;
+  if (!text || !currentUser || chatSending) return;
 
+  chatSending = true;
+  chatInput.value = '';
   try {
     await push(ref(db, 'chat'), {
       uid: currentUser.uid,
@@ -676,21 +714,33 @@ async function sendChat() {
       message: text,
       timestamp: Date.now()
     });
-    chatInput.value = '';
   } catch (e) {
     console.error('Gagal kirim chat:', e);
+    chatInput.value = text;
+  } finally {
+    chatSending = false;
   }
 }
 
-function addChatMessage(msg) {
+function addChatMessage(msg, msgId) {
+  if (msgId && chatEls.has(msgId)) {
+    chatEls.get(msgId).remove();
+    chatEls.delete(msgId);
+  }
+
   const el = document.createElement('div');
   el.className = 'message chat-msg';
   const time = msg.timestamp
     ? new Date(msg.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
     : '';
+  const initial = escapeHtml(String(msg.name || '?').charAt(0).toUpperCase());
+  const photoHtml =
+    '<div class="message-avatar">' + initial +
+    (msg.photo ? '<img src="' + escapeHtml(msg.photo) + '" alt="" onerror="this.remove()">' : '') +
+    '</div>';
 
   el.innerHTML =
-    '<img src="' + escapeHtml(msg.photo || '') + '" alt="">' +
+    photoHtml +
     '<div class="message-content">' +
       '<div class="message-top">' +
         '<strong>' + escapeHtml(msg.name) + '</strong>' +
@@ -699,13 +749,22 @@ function addChatMessage(msg) {
       '<p>' + escapeHtml(msg.message) + '</p>' +
     '</div>';
 
+  if (msgId) chatEls.set(msgId, el);
   chatMessages.appendChild(el);
 
   while (chatMessages.children.length > 200) {
-    chatMessages.removeChild(chatMessages.firstChild);
+    const first = chatMessages.firstChild;
+    chatMessages.removeChild(first);
+    for (const [key, value] of chatEls) {
+      if (value === first) {
+        chatEls.delete(key);
+        break;
+      }
+    }
   }
 
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  const nearBottom = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
+  if (nearBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 // ===== FULLSCREEN (lihat saja, bukan kontrol playback) =====

@@ -1,7 +1,7 @@
 import { db, auth, provider } from './firebase.js';
 import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint } from './utils.js';
 import {
-  ref, onValue, onChildAdded, set, push, update, remove, get, serverTimestamp, onDisconnect as fbOnDisconnect
+  ref, onValue, onChildAdded, onChildRemoved, set, push, update, remove, get, serverTimestamp, onDisconnect as fbOnDisconnect, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import {
   signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged
@@ -32,6 +32,8 @@ const playlistList = $('playlistList');
 const chatMessages = $('chatMessages');
 const chatInput = $('chatInput');
 const btnChatSend = $('btnChatSend');
+const chatEls = new Map();
+let chatSending = false;
 const hostViewerCountBar = $('hostViewerCountBar');
 const nextFilmBar = $('nextFilmBar');
 const btnPlayPause = $('btnPlayPause');
@@ -165,7 +167,7 @@ function renderSyncMode() {
   const isAsync = syncMode === 'async';
   btnSyncMode.classList.toggle('active', isAsync);
   btnSyncMode.setAttribute('aria-pressed', String(isAsync));
-  syncModeLabel.textContent = isAsync ? 'Mandiri' : 'Sinkron';
+  syncModeLabel.textContent = isAsync ? 'Async' : 'Sync';
 }
 
 onValue(ref(db, 'settings/syncMode'), snap => {
@@ -887,16 +889,28 @@ function initChat() {
   btnChatSend.addEventListener('click', sendChat);
   chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
 
-  onChildAdded(ref(db, 'chat'), snap => {
+  const chatQuery = query(ref(db, 'chat'), limitToLast(200));
+
+  onChildAdded(chatQuery, snap => {
     const msg = snap.val();
     if (msg) addChatMessage(msg, snap.key);
+  });
+
+  onChildRemoved(chatQuery, snap => {
+    const el = chatEls.get(snap.key);
+    if (el) {
+      el.remove();
+      chatEls.delete(snap.key);
+    }
   });
 }
 
 async function sendChat() {
   const text = chatInput.value.trim();
-  if (!text || !currentUser) return;
+  if (!text || !currentUser || chatSending) return;
 
+  chatSending = true;
+  chatInput.value = '';
   try {
     await push(ref(db, 'chat'), {
       uid: currentUser.uid,
@@ -905,21 +919,33 @@ async function sendChat() {
       message: text,
       timestamp: Date.now()
     });
-    chatInput.value = '';
   } catch (e) {
     console.error('Gagal kirim chat:', e);
+    chatInput.value = text;
+  } finally {
+    chatSending = false;
   }
 }
 
 function addChatMessage(msg, msgId) {
+  if (msgId && chatEls.has(msgId)) {
+    chatEls.get(msgId).remove();
+    chatEls.delete(msgId);
+  }
+
   const el = document.createElement('div');
   el.className = 'message chat-msg';
   const time = msg.timestamp
     ? new Date(msg.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
     : '';
+  const initial = escapeHtml(String(msg.name || '?').charAt(0).toUpperCase());
+  const photoHtml =
+    '<div class="message-avatar">' + initial +
+    (msg.photo ? '<img src="' + escapeHtml(msg.photo) + '" alt="" onerror="this.remove()">' : '') +
+    '</div>';
 
   el.innerHTML =
-    '<img src="' + escapeHtml(msg.photo || '') + '" alt="">' +
+    photoHtml +
     '<div class="message-content">' +
       '<div class="message-top">' +
         '<strong>' + escapeHtml(msg.name) + '</strong>' +
@@ -932,19 +958,30 @@ function addChatMessage(msg, msgId) {
     '</button>';
 
   el.querySelector('.chat-delete').addEventListener('click', async () => {
-    if (msgId) {
+    if (!msgId) return;
+    try {
       await remove(ref(db, 'chat/' + msgId));
-      el.remove();
+    } catch (e) {
+      console.error('Gagal hapus chat:', e);
     }
   });
 
+  if (msgId) chatEls.set(msgId, el);
   chatMessages.appendChild(el);
 
   while (chatMessages.children.length > 200) {
-    chatMessages.removeChild(chatMessages.firstChild);
+    const first = chatMessages.firstChild;
+    chatMessages.removeChild(first);
+    for (const [key, value] of chatEls) {
+      if (value === first) {
+        chatEls.delete(key);
+        break;
+      }
+    }
   }
 
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  const nearBottom = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
+  if (nearBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 // ===== NEXT FILM COUNTDOWN =====

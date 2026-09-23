@@ -1276,14 +1276,14 @@ body {
 
     overflow: hidden;
 
-    padding: 12px 16px;
+    padding: 10px 16px;
 
-    gap: 8px;
+    gap: 6px;
 }
 
 .viewer-section-label {
     color: #818b99;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.6px;
@@ -1297,7 +1297,7 @@ body {
 .viewer-list {
     flex: 1;
 
-    min-height: 60px;
+    min-height: 0;
 
     overflow-y: auto;
     overflow-x: hidden;
@@ -1319,7 +1319,7 @@ body {
 
     gap: 10px;
 
-    padding: 8px 12px;
+    padding: 6px 10px;
 
     border: 1px solid #26303d;
     border-radius: 10px;
@@ -1334,12 +1334,20 @@ body {
 
 .viewer-item-host img,
 .viewer-item img {
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
 
     border-radius: 50%;
 
     object-fit: cover;
+}
+
+.viewer-item-host .message-avatar,
+.viewer-item .message-avatar {
+    width: 26px;
+    height: 26px;
+
+    font-size: 11px;
 }
 
 .viewer-item-host .name,
@@ -1465,6 +1473,40 @@ body {
     height: 34px;
 
     flex-shrink: 0;
+
+    border-radius: 50%;
+
+    object-fit: cover;
+}
+
+.message-avatar {
+    width: 34px;
+    height: 34px;
+
+    flex-shrink: 0;
+
+    position: relative;
+
+    border-radius: 50%;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: #26303d;
+
+    color: #aeb7c3;
+
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.message-avatar img {
+    position: absolute;
+    inset: 0;
+
+    width: 100%;
+    height: 100%;
 
     border-radius: 50%;
 

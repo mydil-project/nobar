@@ -23,8 +23,8 @@
     "chat": {
       ".read": "auth != null",
       "$msgId": {
-        ".write": "auth != null",
-        ".validate": "newData.hasChildren(['uid', 'name', 'message', 'timestamp']) && newData.child('uid').val() === auth.uid"
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'host' || data.child('uid').val() === auth.uid || (newData.exists() && newData.child('uid').val() === auth.uid))",
+        ".validate": "newData.hasChildren(['uid', 'name', 'message', 'timestamp']) && newData.child('uid').val() === auth.uid && newData.child('message').isString() && newData.child('message').val().length > 0 && newData.child('message').val().length <= 500"
       }
     },
     "users": {
