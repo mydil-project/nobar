@@ -240,6 +240,20 @@
 
     </main>
 
+    <!-- RESCHEDULE MODAL -->
+    <div id="rescheduleModal" class="modal-overlay hidden">
+        <div class="modal">
+            <h3>Ubah Jadwal</h3>
+            <p id="rescheduleTitle" class="modal-sub"></p>
+            <input id="rescheduleInput" type="datetime-local">
+            <p class="modal-hint">Kosongkan lalu Simpan untuk menghapus jadwal.</p>
+            <div class="modal-actions">
+                <button id="rescheduleCancel" class="btn-ghost" type="button">Batal</button>
+                <button id="rescheduleSave" class="add-video" type="button">Simpan</button>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>

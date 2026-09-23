@@ -1,10 +1,10 @@
 import { db, auth, provider } from './firebase.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint } from './utils.js';
 import {
   ref, onValue, onChildAdded, push, update, get, serverTimestamp, onDisconnect as fbOnDisconnect
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import {
-  signInWithPopup, signOut, onAuthStateChanged
+  signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // DOM
@@ -67,7 +67,17 @@ btnLogin.addEventListener('click', async () => {
   try {
     loginError.textContent = '';
     await signInWithPopup(auth, provider);
+    if (isDesktopPointer()) requestDocumentFullscreen().catch(() => {});
   } catch (e) {
+    if (e && e.code === 'auth/popup-blocked') {
+      try {
+        await signInWithRedirect(auth, provider);
+        return;
+      } catch (e2) {
+        loginError.textContent = 'Gagal login: ' + e2.message;
+        return;
+      }
+    }
     loginError.textContent = 'Gagal login: ' + e.message;
   }
 });
@@ -81,6 +91,7 @@ onAuthStateChanged(auth, user => {
     userPhoto.src = user.photoURL || '';
     userName.textContent = user.displayName || 'Penonton';
     initAll();
+    showFullscreenHint();
   } else {
     currentUser = null;
     loginScreen.classList.remove('hidden');

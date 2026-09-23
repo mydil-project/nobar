@@ -1,10 +1,10 @@
 import { db, auth, provider } from './firebase.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint } from './utils.js';
 import {
   ref, onValue, onChildAdded, set, push, update, remove, get, serverTimestamp, onDisconnect as fbOnDisconnect
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import {
-  signInWithPopup, signOut, onAuthStateChanged
+  signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // DOM
@@ -47,6 +47,11 @@ const nextFilmBarCountdown = $('nextFilmBarCountdown');
 const nextFilmBarTitle = $('nextFilmBarTitle');
 const btnSyncMode = $('btnSyncMode');
 const syncModeLabel = $('syncModeLabel');
+const rescheduleModal = $('rescheduleModal');
+const rescheduleTitle = $('rescheduleTitle');
+const rescheduleInput = $('rescheduleInput');
+const rescheduleSave = $('rescheduleSave');
+const rescheduleCancel = $('rescheduleCancel');
 
 const DEFAULT_STREAM_URL = 'https://3ea22335.wurl.com/master/f36d25e7e52f1ba8d7e56eb859c636563214f541/UmFrdXRlblRWLWdiX1JlZEJ1bGxUVl9ITFM/playlist.m3u8';
 const DEFAULT_STREAM_TITLE = 'Red Bull TV';
@@ -60,6 +65,7 @@ let lastLoadedUrl = '';
 let inited = false;
 let presenceBound = false;
 let scheduleBusy = false;
+let rescheduleId = null;
 
 // ===== HELPERS =====
 function isYoutubeUrl(url) {
@@ -115,7 +121,17 @@ btnLogin.addEventListener('click', async () => {
   try {
     loginError.textContent = '';
     await signInWithPopup(auth, provider);
+    if (isDesktopPointer()) requestDocumentFullscreen().catch(() => {});
   } catch (e) {
+    if (e && e.code === 'auth/popup-blocked') {
+      try {
+        await signInWithRedirect(auth, provider);
+        return;
+      } catch (e2) {
+        loginError.textContent = 'Gagal login: ' + e2.message;
+        return;
+      }
+    }
     loginError.textContent = 'Gagal login: ' + e.message;
   }
 });
@@ -129,6 +145,7 @@ onAuthStateChanged(auth, user => {
     hostPhoto.src = user.photoURL || '';
     hostName.textContent = user.displayName || 'Host';
     initAll();
+    showFullscreenHint();
   } else {
     currentUser = null;
     loginScreen.classList.remove('hidden');
@@ -471,10 +488,65 @@ async function checkSchedule() {
 }
 
 // ===== PLAYLIST =====
+function toDatetimeLocalValue(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = n => (n < 10 ? '0' : '') + n;
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+    'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function openReschedule(id) {
+  const item = playlistData.find(p => p.id === id);
+  if (!item) return;
+  rescheduleId = id;
+  rescheduleTitle.textContent = item.title;
+  rescheduleInput.value = toDatetimeLocalValue(item.scheduledTime);
+  rescheduleModal.classList.remove('hidden');
+}
+
+function closeReschedule() {
+  rescheduleModal.classList.add('hidden');
+  rescheduleId = null;
+}
+
+async function saveReschedule() {
+  if (!rescheduleId) return;
+  const item = playlistData.find(p => p.id === rescheduleId);
+  if (!item) {
+    closeReschedule();
+    return;
+  }
+
+  const value = rescheduleInput.value;
+  const patch = {};
+
+  if (value) {
+    patch.scheduledTime = new Date(value).toISOString();
+    if (item.status === 'completed') patch.status = 'pending';
+  } else {
+    patch.scheduledTime = null;
+    patch.status = 'pending';
+  }
+
+  await update(ref(db, 'playlist/' + rescheduleId), patch);
+  closeReschedule();
+}
+
 function initPlaylist() {
   btnAddPlaylist.addEventListener('click', addPlaylistItem);
   inputUrl.addEventListener('keydown', e => { if (e.key === 'Enter') addPlaylistItem(); });
   inputTitle.addEventListener('keydown', e => { if (e.key === 'Enter') addPlaylistItem(); });
+
+  rescheduleCancel.addEventListener('click', closeReschedule);
+  rescheduleSave.addEventListener('click', saveReschedule);
+  rescheduleModal.addEventListener('click', e => {
+    if (e.target === rescheduleModal) closeReschedule();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !rescheduleModal.classList.contains('hidden')) closeReschedule();
+  });
 
   onValue(ref(db, 'playlist'), snap => {
     const data = snap.val() || {};
@@ -518,6 +590,25 @@ async function removePlaylistItem(id) {
   await remove(ref(db, 'playlist/' + id));
 }
 
+async function playPlaylistItem(idx) {
+  const item = playlistData[idx];
+  if (!item) return;
+  if (item.scheduledTime) {
+    await update(ref(db, 'playlist/' + item.id), { status: 'active' });
+  }
+  await set(ref(db, 'state'), {
+    currentUrl: item.url,
+    currentTitle: item.title,
+    currentPlaylistIndex: idx,
+    playing: true,
+    playbackStartTimestamp: Date.now() + serverOffset,
+    videoPosition: 0,
+    isPlaylistItem: true,
+    activePlaylistId: item.id,
+    isDefault: false
+  });
+}
+
 function renderPlaylist() {
   const now = Date.now() + serverOffset;
 
@@ -555,11 +646,31 @@ function renderPlaylist() {
         '<div class="url">' + escapeHtml(item.url) + '</div>' +
       '</div>' +
       (scheduleLabel ? '<span class="schedule-badge ' + badgeClass + '">' + scheduleLabel + '</span>' : '') +
+      '<button class="btn-sched" data-id="' + item.id + '" title="Ubah jadwal">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>' +
+      '</button>' +
+      '<button class="btn-play" data-idx="' + i + '" title="Putar">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+      '</button>' +
       '<button class="btn-del" data-id="' + item.id + '" title="Hapus">' +
         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
       '</button>' +
     '</div>';
   }).join('');
+
+  playlistList.querySelectorAll('.btn-sched').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      openReschedule(btn.dataset.id);
+    });
+  });
+
+  playlistList.querySelectorAll('.btn-play').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      playPlaylistItem(parseInt(btn.dataset.idx, 10));
+    });
+  });
 
   playlistList.querySelectorAll('.btn-del').forEach(btn => {
     btn.addEventListener('click', e => {
@@ -569,24 +680,8 @@ function renderPlaylist() {
   });
 
   playlistList.querySelectorAll('.playlist-item').forEach(el => {
-    el.addEventListener('dblclick', async () => {
-      const idx = parseInt(el.dataset.idx);
-      const item = playlistData[idx];
-      if (!item) return;
-      if (item.scheduledTime) {
-        await update(ref(db, 'playlist/' + item.id), { status: 'active' });
-      }
-      await set(ref(db, 'state'), {
-        currentUrl: item.url,
-        currentTitle: item.title,
-        currentPlaylistIndex: idx,
-        playing: true,
-        playbackStartTimestamp: Date.now() + serverOffset,
-        videoPosition: 0,
-        isPlaylistItem: true,
-        activePlaylistId: item.id,
-        isDefault: false
-      });
+    el.addEventListener('dblclick', () => {
+      playPlaylistItem(parseInt(el.dataset.idx, 10));
     });
   });
 }
