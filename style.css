@@ -511,6 +511,35 @@ body {
 }
 
 
+/* AUTOPLAY OVERLAY */
+
+.autoplay-overlay {
+    position: absolute;
+    inset: 0;
+
+    z-index: 4;
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+
+    background: rgba(0, 0, 0, 0.72);
+
+    color: #e8eaed;
+    font-size: 14px;
+
+    cursor: pointer;
+
+    user-select: none;
+}
+
+.autoplay-overlay:hover {
+    background: rgba(0, 0, 0, 0.85);
+}
+
+
 /* PLACEHOLDER */
 
 .video-placeholder {

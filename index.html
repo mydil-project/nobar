@@ -86,7 +86,7 @@
 
                 <div class="video-frame" id="userPlayer">
 
-                    <video id="userVideoPlayer" playsinline></video>
+                    <video id="userVideoPlayer" playsinline preload="metadata"></video>
 
                     <iframe
                         id="userYoutubeFrame"
@@ -99,6 +99,11 @@
 
                     <div id="userNoVideo" class="video-placeholder">
                         <div class="play-big">▶</div>
+                    </div>
+
+                    <div id="userPlayOverlay" class="autoplay-overlay hidden">
+                        <div class="play-big">▶</div>
+                        <span>Klik untuk memutar</span>
                     </div>
 
                 </div>

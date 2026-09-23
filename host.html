@@ -86,7 +86,7 @@
 
                 <div class="video-frame" id="hostPlayer">
 
-                    <video id="hostVideoPlayer" playsinline></video>
+                    <video id="hostVideoPlayer" playsinline preload="metadata"></video>
 
                     <iframe
                         id="hostYoutubeFrame"
@@ -99,6 +99,11 @@
 
                     <div id="hostNoVideo" class="video-placeholder">
                         <div class="play-big">▶</div>
+                    </div>
+
+                    <div id="hostPlayOverlay" class="autoplay-overlay hidden">
+                        <div class="play-big">▶</div>
+                        <span>Klik untuk memutar</span>
                     </div>
 
                     <!-- VIDEO CONTROLS -->
@@ -150,6 +155,7 @@
                                 <span class="toggle-knob"></span>
                             </button>
                         </div>
+                        <button type="button" id="btnPlayDefault" class="fullscreen-btn" title="Putar film default (Red Bull TV)">▶</button>
                         <button type="button" id="btnToggleControls" class="fullscreen-btn" title="Tampilkan kontrol video">⚙</button>
                         <button type="button" id="btnFullscreenAlt" class="fullscreen-btn" title="Fullscreen">⛶</button>
                     </div>

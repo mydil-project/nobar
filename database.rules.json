@@ -1,0 +1,38 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "state": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'host'"
+    },
+    "defaultUrl": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'host'"
+    },
+    "settings": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'host'"
+    },
+    "playlist": {
+      ".read": "auth != null",
+      "$itemId": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'host'"
+      }
+    },
+    "chat": {
+      ".read": "auth != null",
+      "$msgId": {
+        ".write": "auth != null",
+        ".validate": "newData.hasChildren(['uid', 'name', 'message', 'timestamp']) && newData.child('uid').val() === auth.uid"
+      }
+    },
+    "users": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['name', 'online', 'lastSeen'])"
+      }
+    }
+  }
+}

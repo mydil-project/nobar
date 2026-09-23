@@ -21,6 +21,7 @@ const hostNowTitle = $('hostNowTitle');
 const hostVideoPlayer = $('hostVideoPlayer');
 const hostYoutubeFrame = $('hostYoutubeFrame');
 const hostNoVideo = $('hostNoVideo');
+const hostPlayOverlay = $('hostPlayOverlay');
 const hostViewerSection = $('hostViewerSection');
 const viewerListSection = $('viewerListSection');
 const inputTitle = $('inputTitle');
@@ -47,6 +48,7 @@ const nextFilmBarCountdown = $('nextFilmBarCountdown');
 const nextFilmBarTitle = $('nextFilmBarTitle');
 const btnSyncMode = $('btnSyncMode');
 const syncModeLabel = $('syncModeLabel');
+const btnPlayDefault = $('btnPlayDefault');
 const rescheduleModal = $('rescheduleModal');
 const rescheduleTitle = $('rescheduleTitle');
 const rescheduleInput = $('rescheduleInput');
@@ -59,6 +61,10 @@ const DEFAULT_STREAM_TITLE = 'Red Bull TV';
 let hls = null;
 let currentUser = null;
 let serverOffset = 0;
+let timeSynced = false;
+const afterTimeSync = [];
+let autoMuted = false;
+let fsRequested = false;
 let playlistData = [];
 let currentState = {};
 let lastLoadedUrl = '';
@@ -66,6 +72,9 @@ let inited = false;
 let presenceBound = false;
 let scheduleBusy = false;
 let rescheduleId = null;
+let sessionActive = false;
+let reanchorPausedAt = 0;
+let lastReanchorWrite = 0;
 
 // ===== HELPERS =====
 function isYoutubeUrl(url) {
@@ -88,7 +97,60 @@ function fmtTime(sec) {
 }
 
 // ===== FIREBASE OFFSET =====
-onValue(ref(db, '.info/serverTimeOffset'), snap => { serverOffset = snap.val() || 0; });
+onValue(ref(db, '.info/serverTimeOffset'), snap => {
+  serverOffset = snap.val() || 0;
+  if (!timeSynced) {
+    timeSynced = true;
+    while (afterTimeSync.length) afterTimeSync.shift()();
+    applyHostSync();
+  }
+});
+
+function whenTimeSynced(fn) {
+  if (timeSynced) fn();
+  else afterTimeSync.push(fn);
+}
+
+function tryAutoFullscreen() {
+  if (fsRequested || !isDesktopPointer()) return;
+  fsRequested = true;
+  requestDocumentFullscreen().catch(() => {});
+}
+
+// ===== AUTOPLAY =====
+function hidePlayOverlay() {
+  if (hostPlayOverlay) hostPlayOverlay.classList.add('hidden');
+}
+
+function showPlayOverlay() {
+  if (hostPlayOverlay) hostPlayOverlay.classList.remove('hidden');
+}
+
+function tryPlay() {
+  hostVideoPlayer.play()
+    .then(hidePlayOverlay)
+    .catch(() => {
+      if (!hostVideoPlayer.muted) {
+        hostVideoPlayer.muted = true;
+        btnMute.textContent = '🔇';
+        hostVideoPlayer.play()
+          .then(() => {
+            autoMuted = true;
+            hidePlayOverlay();
+          })
+          .catch(() => showPlayOverlay());
+      } else {
+        showPlayOverlay();
+      }
+    });
+}
+
+function unlockAudioOnGesture() {
+  if (!autoMuted) return;
+  autoMuted = false;
+  hostVideoPlayer.muted = false;
+  btnMute.textContent = '🔊';
+}
 
 // ===== TOGGLE VIDEO CONTROLS (langsung, tidak menunggu login) =====
 btnToggleControls.addEventListener('click', () => {
@@ -112,8 +174,12 @@ onValue(ref(db, 'settings/syncMode'), snap => {
 });
 
 btnSyncMode.addEventListener('click', async () => {
-  const next = syncMode === 'async' ? 'sync' : 'async';
+  const next = syncMode === 'sync' ? 'async' : 'sync';
   await set(ref(db, 'settings/syncMode'), next);
+});
+
+btnPlayDefault.addEventListener('click', () => {
+  playDefault(true);
 });
 
 // ===== AUTH =====
@@ -121,7 +187,6 @@ btnLogin.addEventListener('click', async () => {
   try {
     loginError.textContent = '';
     await signInWithPopup(auth, provider);
-    if (isDesktopPointer()) requestDocumentFullscreen().catch(() => {});
   } catch (e) {
     if (e && e.code === 'auth/popup-blocked') {
       try {
@@ -136,10 +201,12 @@ btnLogin.addEventListener('click', async () => {
   }
 });
 
-onAuthStateChanged(auth, user => {
+onAuthStateChanged(auth, async user => {
   if (user) {
     currentUser = user;
-    registerHost(user);
+    sessionActive = true;
+    reanchorPausedAt = 0;
+    await registerHost(user);
     loginScreen.classList.add('hidden');
     hostPage.classList.remove('hidden');
     hostPhoto.src = user.photoURL || '';
@@ -148,6 +215,12 @@ onAuthStateChanged(auth, user => {
     showFullscreenHint();
   } else {
     currentUser = null;
+    sessionActive = false;
+    reanchorPausedAt = 0;
+    lastLoadedUrl = '';
+    hostVideoPlayer.pause();
+    stopVideoElements();
+    hideYoutubeFrame();
     loginScreen.classList.remove('hidden');
     hostPage.classList.add('hidden');
   }
@@ -196,11 +269,17 @@ function initAll() {
   initChat();
   listenState();
   startScheduler();
+  startHostReanchor();
   initFullscreen();
   startNextFilmCountdown();
   playDefault();
 
   $('btnLogout').addEventListener('click', async () => {
+    sessionActive = false;
+    lastLoadedUrl = '';
+    hostVideoPlayer.pause();
+    stopVideoElements();
+    hideYoutubeFrame();
     if (currentUser) {
       await update(ref(db, 'users/' + currentUser.uid), { online: false });
     }
@@ -231,6 +310,26 @@ function initPlayer() {
   });
 
   hostVideoPlayer.addEventListener('contextmenu', e => e.preventDefault());
+
+  hostVideoPlayer.addEventListener('play', hidePlayOverlay);
+
+  hostVideoPlayer.addEventListener('canplay', () => {
+    applyHostSync();
+    tryAutoFullscreen();
+  });
+
+  if (hostPlayOverlay) {
+    hostPlayOverlay.addEventListener('click', () => {
+      hostVideoPlayer.muted = false;
+      autoMuted = false;
+      btnMute.textContent = '🔊';
+      hostVideoPlayer.play()
+        .then(hidePlayOverlay)
+        .catch(() => showPlayOverlay());
+    });
+  }
+  document.addEventListener('pointerdown', unlockAudioOnGesture);
+  document.addEventListener('keydown', unlockAudioOnGesture);
 
   hostVideoPlayer.addEventListener('timeupdate', updateProgressUI);
   hostVideoPlayer.addEventListener('durationchange', updateProgressUI);
@@ -270,11 +369,13 @@ function initPlayer() {
     const rect = progressBar.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     const pos = ratio * d;
-    await update(ref(db, 'state'), {
-      playing: true,
-      videoPosition: pos,
-      playbackStartTimestamp: Date.now() + serverOffset
-    });
+    if (hostVideoPlayer.readyState >= 2) hostVideoPlayer.currentTime = pos;
+    const patch = { videoPosition: pos };
+    if (currentState.playing) {
+      patch.playing = true;
+      patch.playbackStartTimestamp = Date.now() + serverOffset;
+    }
+    await update(ref(db, 'state'), patch);
   });
 }
 
@@ -324,6 +425,7 @@ function loadVideo(url) {
       if (hostYoutubeFrame.getAttribute('src') !== embed) {
         hostYoutubeFrame.setAttribute('src', embed);
       }
+      tryAutoFullscreen();
     }
     return;
   }
@@ -336,13 +438,28 @@ function loadVideo(url) {
 
   if (isHls) {
     if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-      hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        backBufferLength: 30,
+        startFragPrefetch: true
+      });
       hls.loadSource(url);
       hls.attachMedia(hostVideoPlayer);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        hostVideoPlayer.muted = false;
-        btnMute.textContent = '🔊';
-        hostVideoPlayer.play().catch(() => {});
+        const inst = hls;
+        let started = false;
+        const startFirstPlay = () => {
+          if (started || hls !== inst) return;
+          started = true;
+          hostVideoPlayer.muted = false;
+          btnMute.textContent = '🔊';
+          tryPlay();
+        };
+        inst.on(Hls.Events.FRAG_BUFFERED, startFirstPlay);
+        setTimeout(startFirstPlay, 1500);
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
@@ -355,12 +472,14 @@ function loadVideo(url) {
     } else if (hostVideoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
       hostVideoPlayer.src = url;
       hostVideoPlayer.muted = false;
-      hostVideoPlayer.play().catch(() => {});
+      btnMute.textContent = '🔊';
+      tryPlay();
     }
   } else {
     hostVideoPlayer.src = url;
     hostVideoPlayer.muted = false;
-    hostVideoPlayer.play().catch(() => {});
+    btnMute.textContent = '🔊';
+    tryPlay();
   }
 }
 
@@ -370,6 +489,10 @@ function hideYoutubeFrame() {
 }
 
 async function playDefault(force = false) {
+  if (!timeSynced) {
+    whenTimeSynced(() => playDefault(force));
+    return;
+  }
   if (!force) {
     try {
       const snap = await get(ref(db, 'state'));
@@ -394,6 +517,68 @@ async function playDefault(force = false) {
 }
 
 // ===== STATE =====
+// Tarik formula state ke currentTime host yang aktual (drift > 0.5s).
+// Viewer mengejar formula → otomatis mengikuti host, tidak mendahui.
+function startHostReanchor() {
+  setInterval(() => {
+    if (!timeSynced || !sessionActive) return;
+    const state = currentState;
+    if (!state.playing || !state.currentUrl || isYoutubeUrl(state.currentUrl)) return;
+    if (!hostVideoPlayer.src || hostVideoPlayer.readyState < 2) return;
+    const dur = hostVideoPlayer.duration;
+    if (Number.isNaN(dur)) return;
+
+    const actual = hostVideoPlayer.currentTime || 0;
+
+    if (hostVideoPlayer.paused) {
+      if (!reanchorPausedAt) reanchorPausedAt = Date.now();
+      if (Date.now() - reanchorPausedAt < 4000) return;
+      if (Date.now() - lastReanchorWrite < 4000) return;
+    } else {
+      reanchorPausedAt = 0;
+    }
+
+    const elapsed = (Date.now() + serverOffset - (state.playbackStartTimestamp || 0)) / 1000;
+    const expected = (state.videoPosition || 0) + elapsed;
+
+    if (Math.abs(actual - expected) > 0.5) {
+      lastReanchorWrite = Date.now();
+      update(ref(db, 'state'), {
+        videoPosition: actual,
+        playbackStartTimestamp: Date.now() + serverOffset
+      });
+    }
+  }, 500);
+}
+
+function applyHostSync() {
+  const state = currentState;
+  if (isYoutubeUrl(state.currentUrl)) return;
+
+  const mediaReady = hostVideoPlayer.readyState >= 2;
+
+  if (state.playing) {
+    if (hostVideoPlayer.paused && hostVideoPlayer.src && mediaReady) {
+      tryPlay();
+    }
+
+    const canSeek = mediaReady && isFinite(hostVideoPlayer.duration) && hostVideoPlayer.duration > 0;
+    if (canSeek && hostVideoPlayer.src && timeSynced) {
+      const elapsed = (Date.now() + serverOffset - (state.playbackStartTimestamp || 0)) / 1000;
+      const pos = (state.videoPosition || 0) + elapsed;
+      if (pos >= 0 && pos < hostVideoPlayer.duration && Math.abs(hostVideoPlayer.currentTime - pos) > 2) {
+        hostVideoPlayer.currentTime = pos;
+      }
+    }
+  } else {
+    if (!hostVideoPlayer.paused) hostVideoPlayer.pause();
+    if (mediaReady && hostVideoPlayer.src && isFinite(hostVideoPlayer.duration) &&
+        Math.abs(hostVideoPlayer.currentTime - (state.videoPosition || 0)) > 2) {
+      hostVideoPlayer.currentTime = state.videoPosition || 0;
+    }
+  }
+}
+
 function listenState() {
   onValue(ref(db, 'state'), snap => {
     const state = snap.val() || {};
@@ -407,28 +592,7 @@ function listenState() {
     hostNowTitle.textContent = state.currentTitle || 'Tidak ada';
     btnPlayPause.textContent = state.playing ? '⏸' : '▶';
 
-    if (isYoutubeUrl(state.currentUrl)) return;
-
-    if (state.playing) {
-      if (hostVideoPlayer.paused && hostVideoPlayer.src) {
-        hostVideoPlayer.play().catch(() => {});
-      }
-
-      const canSeek = isFinite(hostVideoPlayer.duration) && hostVideoPlayer.duration > 0;
-      if (canSeek && hostVideoPlayer.src) {
-        const elapsed = (Date.now() + serverOffset - (state.playbackStartTimestamp || 0)) / 1000;
-        const pos = (state.videoPosition || 0) + elapsed;
-        if (pos >= 0 && pos < hostVideoPlayer.duration && Math.abs(hostVideoPlayer.currentTime - pos) > 2) {
-          hostVideoPlayer.currentTime = pos;
-        }
-      }
-    } else {
-      if (!hostVideoPlayer.paused) hostVideoPlayer.pause();
-      if (hostVideoPlayer.src && isFinite(hostVideoPlayer.duration) &&
-          Math.abs(hostVideoPlayer.currentTime - (state.videoPosition || 0)) > 2) {
-        hostVideoPlayer.currentTime = state.videoPosition || 0;
-      }
-    }
+    applyHostSync();
   });
 }
 
@@ -438,7 +602,7 @@ function startScheduler() {
 }
 
 async function checkSchedule() {
-  if (scheduleBusy) return;
+  if (!timeSynced || scheduleBusy || !sessionActive) return;
   scheduleBusy = true;
 
   try {

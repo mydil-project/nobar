@@ -21,6 +21,7 @@ const userNowTitle = $('userNowTitle');
 const userVideoPlayer = $('userVideoPlayer');
 const userYoutubeFrame = $('userYoutubeFrame');
 const userNoVideo = $('userNoVideo');
+const userPlayOverlay = $('userPlayOverlay');
 const hostViewerSection = $('hostViewerSection');
 const viewerListSection = $('viewerListSection');
 const chatMessages = $('chatMessages');
@@ -39,6 +40,10 @@ const DEFAULT_STREAM_TITLE = 'Red Bull TV';
 let hls = null;
 let currentUser = null;
 let serverOffset = 0;
+let timeSynced = false;
+let autoMuted = false;
+let fsRequested = false;
+let initialSeekDone = false;
 let playlistData = [];
 let currentState = {};
 let lastLoadedUrl = '';
@@ -60,14 +65,67 @@ function parseYoutubeId(url) {
 }
 
 // ===== FIREBASE OFFSET =====
-onValue(ref(db, '.info/serverTimeOffset'), snap => { serverOffset = snap.val() || 0; });
+onValue(ref(db, '.info/serverTimeOffset'), snap => {
+  serverOffset = snap.val() || 0;
+  if (!timeSynced) {
+    timeSynced = true;
+    if (watchMode !== 'async') {
+      if (userVideoPlayer.readyState >= 2 && !initialSeekDone) {
+        initialSeekDone = true;
+        syncPlayback(true);
+      } else {
+        syncPlayback();
+      }
+    } else {
+      tickAsync();
+    }
+  }
+});
+
+function tryAutoFullscreen() {
+  if (fsRequested || !isDesktopPointer()) return;
+  fsRequested = true;
+  requestDocumentFullscreen().catch(() => {});
+}
+
+// ===== AUTOPLAY =====
+function hidePlayOverlay() {
+  if (userPlayOverlay) userPlayOverlay.classList.add('hidden');
+}
+
+function showPlayOverlay() {
+  if (userPlayOverlay) userPlayOverlay.classList.remove('hidden');
+}
+
+function tryPlay() {
+  userVideoPlayer.play()
+    .then(hidePlayOverlay)
+    .catch(() => {
+      if (!userVideoPlayer.muted) {
+        userVideoPlayer.muted = true;
+        userVideoPlayer.play()
+          .then(() => {
+            autoMuted = true;
+            hidePlayOverlay();
+          })
+          .catch(() => showPlayOverlay());
+      } else {
+        showPlayOverlay();
+      }
+    });
+}
+
+function unlockAudioOnGesture() {
+  if (!autoMuted) return;
+  autoMuted = false;
+  userVideoPlayer.muted = false;
+}
 
 // ===== AUTH =====
 btnLogin.addEventListener('click', async () => {
   try {
     loginError.textContent = '';
     await signInWithPopup(auth, provider);
-    if (isDesktopPointer()) requestDocumentFullscreen().catch(() => {});
   } catch (e) {
     if (e && e.code === 'auth/popup-blocked') {
       try {
@@ -94,6 +152,11 @@ onAuthStateChanged(auth, user => {
     showFullscreenHint();
   } else {
     currentUser = null;
+    lastLoadedUrl = '';
+    initialSeekDone = false;
+    userVideoPlayer.pause();
+    stopVideoElements();
+    hideYoutubeFrame();
     loginScreen.classList.remove('hidden');
     userPage.classList.add('hidden');
   }
@@ -156,6 +219,11 @@ async function initAll() {
   initFullscreen();
 
   $('btnLogout').addEventListener('click', async () => {
+    lastLoadedUrl = '';
+    initialSeekDone = false;
+    userVideoPlayer.pause();
+    stopVideoElements();
+    hideYoutubeFrame();
     if (currentUser) {
       await update(ref(db, 'users/' + currentUser.uid), { online: false });
     }
@@ -166,8 +234,28 @@ async function initAll() {
 // ===== PLAYER (sinkron saja, tanpa kontrol) =====
 function initPlayer() {
   userVideoPlayer.addEventListener('contextmenu', e => e.preventDefault());
-  userVideoPlayer.addEventListener('play', () => {});
-  userVideoPlayer.addEventListener('pause', () => {});
+
+  userVideoPlayer.addEventListener('play', hidePlayOverlay);
+
+  userVideoPlayer.addEventListener('canplay', () => {
+    tryAutoFullscreen();
+    if (watchMode !== 'async' && timeSynced && !initialSeekDone) {
+      initialSeekDone = true;
+      syncPlayback(true);
+    }
+  });
+
+  if (userPlayOverlay) {
+    userPlayOverlay.addEventListener('click', () => {
+      userVideoPlayer.muted = false;
+      autoMuted = false;
+      userVideoPlayer.play()
+        .then(hidePlayOverlay)
+        .catch(() => showPlayOverlay());
+    });
+  }
+  document.addEventListener('pointerdown', unlockAudioOnGesture);
+  document.addEventListener('keydown', unlockAudioOnGesture);
 
   userVideoPlayer.addEventListener('ended', () => {
     if (watchMode !== 'async') return;
@@ -216,6 +304,7 @@ function loadVideo(url) {
       if (userYoutubeFrame.getAttribute('src') !== embed) {
         userYoutubeFrame.setAttribute('src', embed);
       }
+      tryAutoFullscreen();
     }
     return;
   }
@@ -228,11 +317,26 @@ function loadVideo(url) {
 
   if (isHls) {
     if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-      hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        backBufferLength: 30,
+        startFragPrefetch: true
+      });
       hls.loadSource(url);
       hls.attachMedia(userVideoPlayer);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        applyPlaybackAfterLoad();
+        const inst = hls;
+        let started = false;
+        const startFirstPlay = () => {
+          if (started || hls !== inst) return;
+          started = true;
+          applyPlaybackAfterLoad();
+        };
+        inst.on(Hls.Events.FRAG_BUFFERED, startFirstPlay);
+        setTimeout(startFirstPlay, 1500);
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
@@ -253,8 +357,11 @@ function loadVideo(url) {
 }
 
 function applyPlaybackAfterLoad() {
-  if (watchMode === 'async') applyAsyncAfterLoad();
-  else syncPlayback(true);
+  if (watchMode === 'async') {
+    applyAsyncAfterLoad();
+    return;
+  }
+  if (userVideoPlayer.paused) tryPlay();
 }
 
 // ===== SINKRONISASI DENGAN HOST =====
@@ -271,15 +378,16 @@ function syncPlayback(force = false) {
   const state = currentState;
   if (!state.currentUrl || isYoutubeUrl(state.currentUrl)) return;
 
-  const canSeek = isFinite(userVideoPlayer.duration) && userVideoPlayer.duration > 0;
+  const mediaReady = userVideoPlayer.readyState >= 2;
+  const canSeek = mediaReady && isFinite(userVideoPlayer.duration) && userVideoPlayer.duration > 0;
   const srcReady = !!userVideoPlayer.src;
 
   if (state.playing) {
-    if (userVideoPlayer.paused && srcReady) {
-      userVideoPlayer.play().catch(() => {});
+    if (userVideoPlayer.paused && srcReady && mediaReady) {
+      tryPlay();
     }
 
-    if (canSeek && srcReady) {
+    if (canSeek && srcReady && timeSynced) {
       const pos = expectedPosition(state);
       const drift = Math.abs(userVideoPlayer.currentTime - pos);
 
@@ -331,6 +439,7 @@ function listenSyncMode() {
     } else {
       resetAsyncTracking();
       lastLoadedUrl = '';
+      initialSeekDone = false;
       if (currentState.currentUrl) {
         lastLoadedUrl = currentState.currentUrl;
         loadVideo(currentState.currentUrl);
@@ -358,7 +467,7 @@ function enterAsyncGap(id) {
 
 function applyAsyncAfterLoad() {
   if (watchMode !== 'async') return;
-  userVideoPlayer.play().catch(() => {});
+  tryPlay();
 
   const pos = pendingAsyncPos;
   if (pos == null) return;
@@ -377,12 +486,13 @@ function applyAsyncAfterLoad() {
 }
 
 function tickAsync() {
-  if (watchMode !== 'async') return;
+  if (watchMode !== 'async' || !timeSynced) return;
 
   const now = Date.now() + serverOffset;
   let active = null;
   for (const item of playlistData) {
     if (!item.scheduledTime) continue;
+    if (item.status === 'completed' && item.id !== asyncActiveId) continue;
     const t = new Date(item.scheduledTime).getTime();
     if (now >= t) active = item;
   }
@@ -423,7 +533,7 @@ function tickAsync() {
     }
   }
   if (userVideoPlayer.paused && userVideoPlayer.src) {
-    userVideoPlayer.play().catch(() => {});
+    tryPlay();
   }
 }
 
@@ -436,6 +546,7 @@ function listenState() {
 
     if (state.currentUrl && state.currentUrl !== lastLoadedUrl) {
       lastLoadedUrl = state.currentUrl;
+      initialSeekDone = false;
       loadVideo(state.currentUrl);
     }
 
