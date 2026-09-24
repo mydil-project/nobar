@@ -163,11 +163,20 @@ function isEditableTarget(target) {
   return !!target.closest('input, textarea, select, [contenteditable], .chat-input');
 }
 
+// ===== TOGGLE VIDEO CONTROLS (langsung, tidak menunggu login) =====
+btnToggleControls.addEventListener('click', () => {
+  videoControls.classList.toggle('hidden');
+  btnToggleControls.classList.toggle('active');
+});
+
 function hideAllToasts() {
   hideSoundToast();
   const fs = document.getElementById('fsToast');
   if (fs) fs.classList.add('hidden');
 }
+
+// Focus chat siap sebelum login/initAll — cegah keyboard mobile gagal di first-entry
+bindChatInputFocus();
 
 function tryPlay() {
   if (!autoMuted) hostVideoPlayer.muted = false;
@@ -287,6 +296,7 @@ onAuthStateChanged(auth, async user => {
     hostPage.classList.remove('hidden');
     hostPhoto.src = user.photoURL || '';
     hostName.textContent = user.displayName || 'Host';
+    hideAllToasts();
     initAll();
     showFullscreenHint();
   } else {
@@ -342,11 +352,11 @@ function initAll() {
   if (inited) return;
   inited = true;
 
+  initChat();
   initTabs();
   initPlayer();
   initPlaylist();
   initViewers();
-  initChat();
   listenState();
   startScheduler();
   startHostReanchor();
@@ -984,28 +994,35 @@ function initViewers() {
 
 // ===== CHAT =====
 function updateChatMsgCount() {
-  if (chatMsgCount) chatMsgCount.textContent = '(' + chatEls.size + ' pesan)';
+  const n = chatMessages ? chatMessages.querySelectorAll('.message').length : chatEls.size;
+  if (chatMsgCount) chatMsgCount.textContent = '(' + n + ' pesan)';
 }
 
-function initChat() {
-  btnChatSend.addEventListener('click', sendChat);
-  chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
-
-  chatInput.addEventListener('focus', () => {
-    hideAllToasts();
-    if (window.visualViewport) {
-      requestAnimationFrame(() => chatInput.scrollIntoView({ block: 'nearest' }));
-    }
-  });
+function bindChatInputFocus() {
+  chatInput.addEventListener('focus', hideAllToasts);
 
   const chatInputWrap = document.querySelector('.chat-input');
   if (chatInputWrap) {
     chatInputWrap.addEventListener('pointerdown', e => {
+      hideAllToasts();
       if (e.target === chatInput) return;
       e.preventDefault();
       chatInput.focus();
     });
   }
+
+  const chatEl = document.querySelector('.chat');
+  if (chatEl) {
+    chatEl.addEventListener('pointerdown', hideAllToasts);
+  }
+}
+
+function initChat() {
+  if (initChat.done) return;
+  initChat.done = true;
+
+  btnChatSend.addEventListener('click', sendChat);
+  chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
 
   const chatQuery = query(ref(db, 'chat'), limitToLast(200));
 
@@ -1019,9 +1036,11 @@ function initChat() {
     if (el) {
       el.remove();
       chatEls.delete(snap.key);
-      updateChatMsgCount();
     }
+    updateChatMsgCount();
   });
+
+  updateChatMsgCount();
 }
 
 async function sendChat() {

@@ -198,6 +198,9 @@ function hideAllToasts() {
   if (fs) fs.classList.add('hidden');
 }
 
+// Focus chat siap sebelum login/initAll — cegah keyboard mobile gagal di first-entry
+bindChatInputFocus();
+
 // ===== AUTH =====
 btnLogin.addEventListener('click', async () => {
   try {
@@ -233,6 +236,7 @@ onAuthStateChanged(auth, user => {
       userPhoto.style.display = 'none';
     }
     userName.textContent = user.displayName || 'Penonton';
+    hideAllToasts();
     initAll();
     showFullscreenHint();
   } else {
@@ -292,6 +296,8 @@ async function initAll() {
   if (inited) return;
   inited = true;
 
+  initChat();
+
   try {
     const snap = await get(ref(db, 'settings/syncMode'));
     watchMode = snap.val() === 'async' ? 'async' : 'sync';
@@ -299,7 +305,6 @@ async function initAll() {
 
   initPlayer();
   initViewers();
-  initChat();
   listenSyncMode();
   listenState();
   listenPlaylistMeta();
@@ -779,28 +784,35 @@ function initViewers() {
 
 // ===== CHAT (tanpa tombol hapus) =====
 function updateChatMsgCount() {
-  if (chatMsgCount) chatMsgCount.textContent = '(' + chatEls.size + ' pesan)';
+  const n = chatMessages ? chatMessages.querySelectorAll('.message').length : chatEls.size;
+  if (chatMsgCount) chatMsgCount.textContent = '(' + n + ' pesan)';
 }
 
-function initChat() {
-  btnChatSend.addEventListener('click', sendChat);
-  chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
-
-  chatInput.addEventListener('focus', () => {
-    hideAllToasts();
-    if (window.visualViewport) {
-      requestAnimationFrame(() => chatInput.scrollIntoView({ block: 'nearest' }));
-    }
-  });
+function bindChatInputFocus() {
+  chatInput.addEventListener('focus', hideAllToasts);
 
   const chatInputWrap = document.querySelector('.chat-input');
   if (chatInputWrap) {
     chatInputWrap.addEventListener('pointerdown', e => {
+      hideAllToasts();
       if (e.target === chatInput) return;
       e.preventDefault();
       chatInput.focus();
     });
   }
+
+  const chatEl = document.querySelector('.chat');
+  if (chatEl) {
+    chatEl.addEventListener('pointerdown', hideAllToasts);
+  }
+}
+
+function initChat() {
+  if (initChat.done) return;
+  initChat.done = true;
+
+  btnChatSend.addEventListener('click', sendChat);
+  chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
 
   const chatQuery = query(ref(db, 'chat'), limitToLast(200));
 
@@ -814,9 +826,11 @@ function initChat() {
     if (el) {
       el.remove();
       chatEls.delete(snap.key);
-      updateChatMsgCount();
     }
+    updateChatMsgCount();
   });
+
+  updateChatMsgCount();
 }
 
 async function sendChat() {
