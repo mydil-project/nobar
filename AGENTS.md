@@ -64,8 +64,8 @@ Shared: `style.css`, `firebase.js` (config + `db`/`auth`/`provider`), `utils.js`
 - Video controls overlay is hidden by default; host toggles with `#btnToggleControls` (bound at module top level, not after login).
 - Touch targets on phone (`≤560px`) should stay ≥40px; inputs use `font-size: 16px` to prevent iOS zoom. `#chatInput` di `≤900px` juga `16px` (bukan hanya `≤560px`).
 - Only the host writes playlist, `state`, and `settings/*`. Viewers are read-only for those paths.
-- Mobile keyboard: `bindChatInputFocus()` dipanggil **di top-level module** (bukan di `initAll`) — focus/wrapper handler siap sebelum login. Tap `.chat` / `.chat-input` → `hideAllToasts()`; wadah non-input → `preventDefault` + `chatInput.focus()`. Toast `#fsToast` di `≤900px` juga dipindah ke atas. Viewer: `initChat()` dipanggil **sebelum** `await get(settings/syncMode)` agar listener chat/counter tidak tertahan network. `initChat.done` guard anti double-bind.
-- Chat message count `#chatMsgCount`: hitung dari DOM (`chatMessages.querySelectorAll('.message').length`), bukan hanya `chatEls.size` — cegah angka `0` saat pesan tampil. Script di-load dengan `?v=soundA` untuk bust cache module di mobile.
+- Mobile keyboard: `bindChatInputFocus()` dipanggil **di top-level module** (bukan di `initAll`) — focus/wrapper handler siap sebelum login. Wrapper `.chat-input` `pointerdown` → `hideAllToasts()`; target non-input → `preventDefault`; **selalu** `chatInput.focus()` (jangan rely native focus — Android bisa menelan). `chatInput` `click` juga → `focus()`. Tap `.chat` → `hideAllToasts()`. Toast `#fsToast` di `≤900px` juga dipindah ke atas. Viewer: `initChat()` dipanggil **sebelum** `await get(settings/syncMode)` agar listener chat/counter tidak tertahan network. `initChat.done` guard anti double-bind.
+- Chat message count `#chatMsgCount`: hitung dari DOM (`chatMessages.querySelectorAll('.message').length`), bukan hanya `chatEls.size` — cegah angka `0` saat pesan tampil. Script di-load dengan `?v=focus1` untuk bust cache module di mobile.
 
 ## Gotchas
 

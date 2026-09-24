@@ -772,11 +772,12 @@ function bindChatInputFocus() {
   if (chatInputWrap) {
     chatInputWrap.addEventListener('pointerdown', e => {
       hideAllToasts();
-      if (e.target === chatInput) return;
-      e.preventDefault();
+      if (e.target !== chatInput) e.preventDefault();
       chatInput.focus();
     });
   }
+
+  chatInput.addEventListener('click', () => chatInput.focus());
 
   const chatEl = document.querySelector('.chat');
   if (chatEl) {
