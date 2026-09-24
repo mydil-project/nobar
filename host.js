@@ -128,30 +128,74 @@ function showPlayOverlay() {
   if (hostPlayOverlay) hostPlayOverlay.classList.remove('hidden');
 }
 
+function hideSoundToast() {
+  clearTimeout(showSoundToast._timer);
+  const el = document.getElementById('soundToast');
+  if (el) el.classList.add('hidden');
+}
+
+function showSoundToast() {
+  let el = document.getElementById('soundToast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'soundToast';
+    el.className = 'fs-toast';
+    el.textContent = '🔊 Klik di mana saja untuk menyalakan suara';
+    el.addEventListener('click', () => unlockAudioOnGesture());
+    document.body.appendChild(el);
+  }
+  el.classList.remove('hidden');
+  clearTimeout(showSoundToast._timer);
+  showSoundToast._timer = setTimeout(hideSoundToast, 5000);
+}
+
+function resumeIfPlaying() {
+  if (!sessionActive || !hostVideoPlayer.src) return;
+  if (isYoutubeUrl(currentState.currentUrl)) return;
+  if (currentState.playing && hostVideoPlayer.paused) tryPlay();
+}
+
 function tryPlay() {
+  if (!autoMuted) hostVideoPlayer.muted = false;
+
   hostVideoPlayer.play()
-    .then(hidePlayOverlay)
-    .catch(() => {
-      if (!hostVideoPlayer.muted) {
+    .then(() => {
+      autoMuted = hostVideoPlayer.muted;
+      hidePlayOverlay();
+      btnMute.textContent = hostVideoPlayer.muted ? '🔇' : '🔊';
+      if (autoMuted) showSoundToast();
+      else hideSoundToast();
+    })
+    .catch(err => {
+      const name = err && err.name;
+      if (name === 'NotSupportedError' || name === 'AbortError') {
+        return;
+      }
+      const blocked = name === 'NotAllowedError' || name === 'SecurityError';
+      if (blocked && !hostVideoPlayer.muted) {
         hostVideoPlayer.muted = true;
+        autoMuted = true;
         btnMute.textContent = '🔇';
         hostVideoPlayer.play()
           .then(() => {
-            autoMuted = true;
             hidePlayOverlay();
+            showSoundToast();
           })
           .catch(() => showPlayOverlay());
-      } else {
-        showPlayOverlay();
+        return;
       }
+      showPlayOverlay();
     });
 }
 
 function unlockAudioOnGesture() {
-  if (!autoMuted) return;
-  autoMuted = false;
-  hostVideoPlayer.muted = false;
-  btnMute.textContent = '🔊';
+  hideSoundToast();
+  if (hostVideoPlayer.muted && autoMuted) {
+    hostVideoPlayer.muted = false;
+    autoMuted = false;
+    btnMute.textContent = '🔊';
+  }
+  resumeIfPlaying();
 }
 
 // ===== TOGGLE VIDEO CONTROLS (langsung, tidak menunggu login) =====
@@ -159,6 +203,10 @@ btnToggleControls.addEventListener('click', () => {
   videoControls.classList.toggle('hidden');
   btnToggleControls.classList.toggle('active');
 });
+
+// Gesture sejak awal (termasuk klik login) → unlock auto-mute + hak autoplay bersuara
+document.addEventListener('pointerdown', unlockAudioOnGesture, true);
+document.addEventListener('keydown', unlockAudioOnGesture, true);
 
 // ===== TOGGLE SYNC/ASYNC MODE (host atur semua penonton) =====
 let syncMode = 'sync';
@@ -188,6 +236,10 @@ btnPlayDefault.addEventListener('click', () => {
 btnLogin.addEventListener('click', async () => {
   try {
     loginError.textContent = '';
+    autoMuted = false;
+    hostVideoPlayer.muted = false;
+    btnMute.textContent = '🔊';
+    hideSoundToast();
     await signInWithPopup(auth, provider);
   } catch (e) {
     if (e && e.code === 'auth/popup-blocked') {
@@ -220,6 +272,10 @@ onAuthStateChanged(auth, async user => {
     sessionActive = false;
     reanchorPausedAt = 0;
     lastLoadedUrl = '';
+    autoMuted = false;
+    hostVideoPlayer.muted = false;
+    btnMute.textContent = '🔊';
+    hideSoundToast();
     hostVideoPlayer.pause();
     stopVideoElements();
     hideYoutubeFrame();
@@ -325,13 +381,12 @@ function initPlayer() {
       hostVideoPlayer.muted = false;
       autoMuted = false;
       btnMute.textContent = '🔊';
+      hideSoundToast();
       hostVideoPlayer.play()
         .then(hidePlayOverlay)
         .catch(() => showPlayOverlay());
     });
   }
-  document.addEventListener('pointerdown', unlockAudioOnGesture);
-  document.addEventListener('keydown', unlockAudioOnGesture);
 
   hostVideoPlayer.addEventListener('timeupdate', updateProgressUI);
   hostVideoPlayer.addEventListener('durationchange', updateProgressUI);
@@ -357,12 +412,27 @@ function initPlayer() {
 
   btnMute.addEventListener('click', () => {
     hostVideoPlayer.muted = !hostVideoPlayer.muted;
+    autoMuted = false;
     btnMute.textContent = hostVideoPlayer.muted ? '🔇' : '🔊';
+    if (!hostVideoPlayer.muted) hideSoundToast();
   });
 
   btnToggleTime.addEventListener('click', () => {
     timeDisplay.classList.toggle('hidden');
   });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) resumeIfPlaying();
+  });
+
+  if (typeof IntersectionObserver !== 'undefined') {
+    const io = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) resumeIfPlaying();
+      }
+    }, { threshold: 0.25 });
+    io.observe(hostVideoPlayer);
+  }
 
   progressBar.addEventListener('click', async e => {
     if (isYoutubeUrl(currentState.currentUrl)) return;
@@ -406,6 +476,12 @@ function stopVideoElements() {
 }
 
 function loadVideo(url) {
+  autoMuted = false;
+  hostVideoPlayer.muted = false;
+  btnMute.textContent = '🔊';
+  hideSoundToast();
+  hidePlayOverlay();
+
   if (!url) {
     stopVideoElements();
     hostVideoPlayer.style.display = 'none';

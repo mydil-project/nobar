@@ -78,6 +78,18 @@ body {
     color: #ffffff;
 }
 
+#soundToast {
+    max-width: min(92vw, 360px);
+    text-align: center;
+}
+
+@media (max-width: 900px) {
+    #soundToast {
+        top: 72px;
+        bottom: auto;
+    }
+}
+
 
 /* =====================================================
    MODAL
@@ -1626,6 +1638,14 @@ body {
     color: white;
 
     font-size: 13px;
+
+    pointer-events: auto;
+
+    user-select: text;
+
+    -webkit-user-select: text;
+
+    scroll-margin-bottom: 96px;
 }
 
 .chat-input input::placeholder {
@@ -1717,6 +1737,7 @@ body {
     .app {
         height: auto;
         min-height: 100vh;
+        overflow: visible;
     }
 
     .main {

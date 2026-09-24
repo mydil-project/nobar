@@ -100,34 +100,89 @@ function showPlayOverlay() {
   if (userPlayOverlay) userPlayOverlay.classList.remove('hidden');
 }
 
+function hideSoundToast() {
+  clearTimeout(showSoundToast._timer);
+  const el = document.getElementById('soundToast');
+  if (el) el.classList.add('hidden');
+}
+
+function showSoundToast() {
+  let el = document.getElementById('soundToast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'soundToast';
+    el.className = 'fs-toast';
+    el.textContent = '🔊 Klik di mana saja untuk menyalakan suara';
+    el.addEventListener('click', () => unlockAudioOnGesture());
+    document.body.appendChild(el);
+  }
+  el.classList.remove('hidden');
+  clearTimeout(showSoundToast._timer);
+  showSoundToast._timer = setTimeout(hideSoundToast, 5000);
+}
+
+function resumeIfPlaying() {
+  if (!currentUser) return;
+  if (watchMode === 'async') {
+    if (userVideoPlayer.paused && userVideoPlayer.src) tryPlay();
+    return;
+  }
+  if (!currentState.playing || !userVideoPlayer.src) return;
+  if (isYoutubeUrl(currentState.currentUrl)) return;
+  if (userVideoPlayer.paused) tryPlay();
+}
+
+// Gesture sejak awal (termasuk klik login) → hak autoplay bersuara
+document.addEventListener('pointerdown', unlockAudioOnGesture, true);
+document.addEventListener('keydown', unlockAudioOnGesture, true);
+
 function tryPlay() {
+  if (!autoMuted) userVideoPlayer.muted = false;
+
   userVideoPlayer.play()
-    .then(hidePlayOverlay)
-    .catch(() => {
-      if (!userVideoPlayer.muted) {
+    .then(() => {
+      autoMuted = userVideoPlayer.muted;
+      hidePlayOverlay();
+      if (autoMuted) showSoundToast();
+      else hideSoundToast();
+    })
+    .catch(err => {
+      const name = err && err.name;
+      if (name === 'NotSupportedError' || name === 'AbortError') {
+        return;
+      }
+      const blocked = name === 'NotAllowedError' || name === 'SecurityError';
+      if (blocked && !userVideoPlayer.muted) {
         userVideoPlayer.muted = true;
+        autoMuted = true;
         userVideoPlayer.play()
           .then(() => {
-            autoMuted = true;
             hidePlayOverlay();
+            showSoundToast();
           })
           .catch(() => showPlayOverlay());
-      } else {
-        showPlayOverlay();
+        return;
       }
+      showPlayOverlay();
     });
 }
 
 function unlockAudioOnGesture() {
-  if (!autoMuted) return;
-  autoMuted = false;
-  userVideoPlayer.muted = false;
+  hideSoundToast();
+  if (userVideoPlayer.muted) {
+    userVideoPlayer.muted = false;
+    autoMuted = false;
+  }
+  resumeIfPlaying();
 }
 
 // ===== AUTH =====
 btnLogin.addEventListener('click', async () => {
   try {
     loginError.textContent = '';
+    autoMuted = false;
+    userVideoPlayer.muted = false;
+    hideSoundToast();
     await signInWithPopup(auth, provider);
   } catch (e) {
     if (e && e.code === 'auth/popup-blocked') {
@@ -162,6 +217,9 @@ onAuthStateChanged(auth, user => {
     currentUser = null;
     lastLoadedUrl = '';
     initialSeekDone = false;
+    autoMuted = false;
+    userVideoPlayer.muted = false;
+    hideSoundToast();
     userVideoPlayer.pause();
     stopVideoElements();
     hideYoutubeFrame();
@@ -251,19 +309,21 @@ function initPlayer() {
       initialSeekDone = true;
       syncPlayback(true);
     }
+    if (watchMode !== 'async' && currentState.playing && userVideoPlayer.paused) {
+      tryPlay();
+    }
   });
 
   if (userPlayOverlay) {
     userPlayOverlay.addEventListener('click', () => {
       userVideoPlayer.muted = false;
       autoMuted = false;
+      hideSoundToast();
       userVideoPlayer.play()
         .then(hidePlayOverlay)
         .catch(() => showPlayOverlay());
     });
   }
-  document.addEventListener('pointerdown', unlockAudioOnGesture);
-  document.addEventListener('keydown', unlockAudioOnGesture);
 
   userVideoPlayer.addEventListener('ended', () => {
     if (watchMode !== 'async') return;
@@ -273,6 +333,19 @@ function initPlayer() {
   userVideoPlayer.addEventListener('loadedmetadata', () => {
     if (watchMode === 'async') applyAsyncAfterLoad();
   });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) resumeIfPlaying();
+  });
+
+  if (typeof IntersectionObserver !== 'undefined') {
+    const io = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) resumeIfPlaying();
+      }
+    }, { threshold: 0.25 });
+    io.observe(userVideoPlayer);
+  }
 }
 
 function hideYoutubeFrame() {
@@ -289,6 +362,9 @@ function stopVideoElements() {
 
 function loadVideo(url) {
   hidePlayOverlay();
+  autoMuted = false;
+  userVideoPlayer.muted = false;
+  hideSoundToast();
 
   if (!url) {
     stopVideoElements();
