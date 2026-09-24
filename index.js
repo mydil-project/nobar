@@ -766,7 +766,12 @@ function updateChatMsgCount() {
 }
 
 function bindChatInputFocus() {
-  chatInput.addEventListener('focus', hideAllToasts);
+  chatInput.addEventListener('focus', () => {
+    hideAllToasts();
+    setTimeout(() => {
+      chatInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 300);
+  });
 
   const chatInputWrap = document.querySelector('.chat-input');
   if (chatInputWrap) {

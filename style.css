@@ -1649,7 +1649,7 @@ body {
 
     -webkit-user-select: text;
 
-    scroll-margin-bottom: 96px;
+    scroll-margin-bottom: 240px;
 }
 
 .chat-input input::placeholder {
@@ -1735,7 +1735,13 @@ body {
 
     html,
     body {
+        height: auto;
+        min-height: 100%;
         overflow: auto;
+    }
+
+    body {
+        padding-bottom: 40vh;
     }
 
     .app {
