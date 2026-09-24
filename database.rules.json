@@ -4,26 +4,26 @@
     ".write": false,
     "state": {
       ".read": "auth != null",
-      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'host'"
+      ".write": "auth != null && auth.uid === 'fFOsbbOhCMOcMXiF5Wf88KpBDe22'"
     },
     "defaultUrl": {
       ".read": "auth != null",
-      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'host'"
+      ".write": "auth != null && auth.uid === 'fFOsbbOhCMOcMXiF5Wf88KpBDe22'"
     },
     "settings": {
       ".read": "auth != null",
-      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'host'"
+      ".write": "auth != null && auth.uid === 'fFOsbbOhCMOcMXiF5Wf88KpBDe22'"
     },
     "playlist": {
       ".read": "auth != null",
       "$itemId": {
-        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'host'"
+        ".write": "auth != null && auth.uid === 'fFOsbbOhCMOcMXiF5Wf88KpBDe22'"
       }
     },
     "chat": {
       ".read": "auth != null",
       "$msgId": {
-        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'host' || data.child('uid').val() === auth.uid || (newData.exists() && newData.child('uid').val() === auth.uid))",
+        ".write": "auth != null && (auth.uid === 'fFOsbbOhCMOcMXiF5Wf88KpBDe22' || data.child('uid').val() === auth.uid || (newData.exists() && newData.child('uid').val() === auth.uid))",
         ".validate": "newData.hasChildren(['uid', 'name', 'message', 'timestamp']) && newData.child('uid').val() === auth.uid && newData.child('message').isString() && newData.child('message').val().length > 0 && newData.child('message').val().length <= 500"
       }
     },
@@ -31,7 +31,7 @@
       ".read": "auth != null",
       "$uid": {
         ".write": "auth != null && auth.uid === $uid",
-        ".validate": "newData.hasChildren(['name', 'online', 'lastSeen'])"
+        ".validate": "newData.hasChildren(['name', 'online', 'lastSeen']) && (newData.child('role').val() !== 'host' || auth.uid === 'fFOsbbOhCMOcMXiF5Wf88KpBDe22')"
       }
     }
   }
