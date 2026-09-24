@@ -84,7 +84,8 @@ body {
 }
 
 @media (max-width: 900px) {
-    #soundToast {
+    #soundToast,
+    .fs-toast#fsToast {
         top: 72px;
         bottom: auto;
     }
@@ -1448,6 +1449,12 @@ body {
     font-size: 17px;
 }
 
+.chat-msg-count {
+    color: #8d97a5;
+    font-size: 12px;
+    font-weight: 400;
+}
+
 .chat-viewers {
     color: #aeb7c3;
 
@@ -1790,6 +1797,10 @@ body {
 
     .chat {
         height: 400px;
+    }
+
+    .chat-input input {
+        font-size: 16px;
     }
 
     .header-right {

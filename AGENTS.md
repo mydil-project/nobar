@@ -45,8 +45,8 @@ Shared: `style.css`, `firebase.js` (config + `db`/`auth`/`provider`), `utils.js`
 
 - Login: `signInWithPopup` first; on `auth/popup-blocked` fall back to `signInWithRedirect`.
 - Fullscreen (desktop only, `pointer: fine`): jangan panggil saat/sesaat setelah `signInWithPopup` — activation habis / popup diblokir. `tryAutoFullscreen()` dipanggil dari event `canplay` video pertama (atau saat iframe YouTube dimuat). Jika tetap ditolak (butuh gesture), toast `showFullscreenHint()` tetap fallback (klik → `requestDocumentFullscreen()`).
-- Autoplay: semua `play()` lewat `tryPlay()` — selalu coba **bersuara dulu**; hanya fallback `muted` jika error `NotAllowedError`/`SecurityError` (autoplay diblokir). Gagal karena media belum siap (`NotSupportedError`/`AbortError`) → diam, retry di `canplay`. Jika terpaksa muted → toast `#soundToast` ("Klik di mana saja untuk menyalakan suara", auto-hide 5s; di `≤900px` posisi **atas** `top: 72px` agar tidak menutup `#chatInput`). Gesture (`pointerdown`/`keydown`, capture) via `unlockAudioOnGesture()`: selalu `hideSoundToast()` dulu, unmute jika auto-mute, lalu `resumeIfPlaying()`. `resumeIfPlaying()` juga dipanggil dari `visibilitychange` + `IntersectionObserver` (video masuk viewport) agar playback tidak mati saat scroll/tab background. `loadVideo()` reset `muted`/`autoMuted`.
-- If app visible but not fullscreen (e.g. session restore): `showFullscreenHint()` shows toast `#fsToast` (auto-hide 4s, click retries).
+- Autoplay: semua `play()` lewat `tryPlay()` — selalu coba **bersuara dulu**; hanya fallback `muted` jika error `NotAllowedError`/`SecurityError` (autoplay diblokir). Gagal karena media belum siap (`NotSupportedError`/`AbortError`) → diam, retry di `canplay`. Jika terpaksa muted → toast `#soundToast` ("Klik di mana saja untuk menyalakan suara", auto-hide 5s; di `≤900px` posisi **atas** `top: 72px` agar tidak menutup `#chatInput`). Gesture (`pointerdown`/`keydown`, capture) via `onDocumentGesture()` → `unlockAudioOnGesture()`: selalu `hideSoundToast()` dulu, unmute jika auto-mute, lalu `resumeIfPlaying()`. **Target editable** (`input`/`textarea`/`[contenteditable]`/`.chat-input`, via `isEditableTarget`): hanya `hideSoundToast()`, **jangan** `tryPlay()`/`resumeIfPlaying()` — cegah keyboard mobile tidak terbuka saat tap kolom chat. `resumeIfPlaying()` juga dipanggil dari `visibilitychange` + `IntersectionObserver` (video masuk viewport) agar playback tidak mati saat scroll/tab background. `loadVideo()` reset `muted`/`autoMuted`. `#chatInput` `focus` → `hideAllToasts()` (+ optional `scrollIntoView` jika `visualViewport` ada); `showSoundToast()` no-op saat `#chatInput` sedang focus. Chat auto-scroll (`scrollTop`) skip bila `document.activeElement === #chatInput`.
+- If app visible but not fullscreen (e.g. session restore): `showFullscreenHint()` shows toast `#fsToast` (auto-hide 4s, click retries). Di `≤900px` `#fsToast` juga di **atas** (sama seperti `#soundToast`) agar tidak menutup `#chatInput`.
 
 ## Layout / responsive (`style.css`)
 
@@ -62,8 +62,9 @@ Shared: `style.css`, `firebase.js` (config + `db`/`auth`/`provider`), `utils.js`
 - User-generated strings in HTML: always `escapeHtml` from `utils.js` (chat, names, photo URLs, playlist titles/urls).
 - `.hidden` class = `display: none !important`. Toggle for overlays/controls/modals.
 - Video controls overlay is hidden by default; host toggles with `#btnToggleControls` (bound at module top level, not after login).
-- Touch targets on phone (`≤560px`) should stay ≥40px; inputs use `font-size: 16px` to prevent iOS zoom.
+- Touch targets on phone (`≤560px`) should stay ≥40px; inputs use `font-size: 16px` to prevent iOS zoom. `#chatInput` di `≤900px` juga `16px` (bukan hanya `≤560px`).
 - Only the host writes playlist, `state`, and `settings/*`. Viewers are read-only for those paths.
+- Mobile keyboard: tap `.chat-input` wadah (non-input) → `pointerdown` `preventDefault` + `chatInput.focus()`. Toast `#fsToast` di `≤900px` juga dipindah ke atas (sama seperti `#soundToast`).
 
 ## Gotchas
 

@@ -27,6 +27,7 @@ const viewerListSection = $('viewerListSection');
 const chatMessages = $('chatMessages');
 const chatInput = $('chatInput');
 const btnChatSend = $('btnChatSend');
+const chatMsgCount = $('chatMsgCount');
 const chatEls = new Map();
 let chatSending = false;
 const nextFilmBar = $('nextFilmBar');
@@ -107,6 +108,7 @@ function hideSoundToast() {
 }
 
 function showSoundToast() {
+  if (document.activeElement === chatInput) return;
   let el = document.getElementById('soundToast');
   if (!el) {
     el = document.createElement('div');
@@ -132,9 +134,23 @@ function resumeIfPlaying() {
   if (userVideoPlayer.paused) tryPlay();
 }
 
+function isEditableTarget(target) {
+  if (!target || typeof target.closest !== 'function') return false;
+  if (target.isContentEditable) return true;
+  return !!target.closest('input, textarea, select, [contenteditable], .chat-input');
+}
+
 // Gesture sejak awal (termasuk klik login) → hak autoplay bersuara
-document.addEventListener('pointerdown', unlockAudioOnGesture, true);
-document.addEventListener('keydown', unlockAudioOnGesture, true);
+// Target input: hanya hide toast, JANGAN play() — cegah keyboard mobile gagal buka
+function onDocumentGesture(e) {
+  if (isEditableTarget(e.target)) {
+    hideSoundToast();
+    return;
+  }
+  unlockAudioOnGesture();
+}
+document.addEventListener('pointerdown', onDocumentGesture, true);
+document.addEventListener('keydown', onDocumentGesture, true);
 
 function tryPlay() {
   if (!autoMuted) userVideoPlayer.muted = false;
@@ -174,6 +190,12 @@ function unlockAudioOnGesture() {
     autoMuted = false;
   }
   resumeIfPlaying();
+}
+
+function hideAllToasts() {
+  hideSoundToast();
+  const fs = document.getElementById('fsToast');
+  if (fs) fs.classList.add('hidden');
 }
 
 // ===== AUTH =====
@@ -756,9 +778,29 @@ function initViewers() {
 }
 
 // ===== CHAT (tanpa tombol hapus) =====
+function updateChatMsgCount() {
+  if (chatMsgCount) chatMsgCount.textContent = '(' + chatEls.size + ' pesan)';
+}
+
 function initChat() {
   btnChatSend.addEventListener('click', sendChat);
   chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+
+  chatInput.addEventListener('focus', () => {
+    hideAllToasts();
+    if (window.visualViewport) {
+      requestAnimationFrame(() => chatInput.scrollIntoView({ block: 'nearest' }));
+    }
+  });
+
+  const chatInputWrap = document.querySelector('.chat-input');
+  if (chatInputWrap) {
+    chatInputWrap.addEventListener('pointerdown', e => {
+      if (e.target === chatInput) return;
+      e.preventDefault();
+      chatInput.focus();
+    });
+  }
 
   const chatQuery = query(ref(db, 'chat'), limitToLast(200));
 
@@ -772,6 +814,7 @@ function initChat() {
     if (el) {
       el.remove();
       chatEls.delete(snap.key);
+      updateChatMsgCount();
     }
   });
 }
@@ -839,8 +882,12 @@ function addChatMessage(msg, msgId) {
     }
   }
 
-  const nearBottom = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
-  if (nearBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
+  updateChatMsgCount();
+
+  if (document.activeElement !== chatInput) {
+    const nearBottom = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
+    if (nearBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
 }
 
 // ===== FULLSCREEN (lihat saja, bukan kontrol playback) =====
