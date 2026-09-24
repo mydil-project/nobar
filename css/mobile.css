@@ -56,7 +56,7 @@
     }
 
     body {
-        padding-bottom: 40vh;
+        padding-bottom: 16px;
     }
 
     .app {
@@ -267,22 +267,45 @@
         justify-self: start;
     }
 
+    .playlist-header {
+        gap: 6px;
+        padding: 6px 8px 12px;
+        border-bottom: 1px solid #3d4a5c;
+    }
+
+    .playlist-header .playlist-title {
+        display: none;
+    }
+
     .add-form {
-        flex-direction: column;
+        flex-direction: row;
+        flex-wrap: wrap;
         align-items: stretch;
+        gap: 6px;
     }
 
     .add-form input {
         width: 100%;
-        flex: none;
+        flex: 0 0 100%;
         min-width: 0;
-        height: 40px;
+        height: 36px;
+        padding: 0 10px;
         font-size: 16px;
     }
 
-    .add-video {
-        width: 100%;
-        min-height: 40px;
+    #inputSchedule {
+        flex: 1 1 0;
+        width: auto;
+    }
+
+    .add-form .add-video {
+        width: auto;
+        flex: 0 0 auto;
+        height: 36px;
+        min-height: 36px;
+        padding: 0 12px;
+        font-size: 12px;
+        white-space: nowrap;
     }
 
     .chat-input input {
