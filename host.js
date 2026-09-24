@@ -132,24 +132,11 @@ function showPlayOverlay() {
 function hideSoundToast() {
   clearTimeout(showSoundToast._timer);
   const el = document.getElementById('soundToast');
-  if (el) el.classList.add('hidden');
+  if (el) el.remove();
 }
 
-function showSoundToast() {
-  if (document.activeElement === chatInput) return;
-  let el = document.getElementById('soundToast');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'soundToast';
-    el.className = 'fs-toast';
-    el.textContent = '🔊 Klik di mana saja untuk menyalakan suara';
-    el.addEventListener('click', () => unlockAudioOnGesture());
-    document.body.appendChild(el);
-  }
-  el.classList.remove('hidden');
-  clearTimeout(showSoundToast._timer);
-  showSoundToast._timer = setTimeout(hideSoundToast, 5000);
-}
+// Opsi A: tidak ada toast suara — autoplay selalu bersuara; jika diblokir → overlay play
+function showSoundToast() {}
 
 function resumeIfPlaying() {
   if (!sessionActive || !hostVideoPlayer.src) return;
@@ -179,34 +166,24 @@ function hideAllToasts() {
 bindChatInputFocus();
 
 function tryPlay() {
-  if (!autoMuted) hostVideoPlayer.muted = false;
+  if (autoMuted) {
+    hostVideoPlayer.muted = false;
+    autoMuted = false;
+    btnMute.textContent = '🔊';
+  }
 
   hostVideoPlayer.play()
     .then(() => {
-      autoMuted = hostVideoPlayer.muted;
+      autoMuted = false;
       hidePlayOverlay();
       btnMute.textContent = hostVideoPlayer.muted ? '🔇' : '🔊';
-      if (autoMuted) showSoundToast();
-      else hideSoundToast();
     })
     .catch(err => {
       const name = err && err.name;
       if (name === 'NotSupportedError' || name === 'AbortError') {
         return;
       }
-      const blocked = name === 'NotAllowedError' || name === 'SecurityError';
-      if (blocked && !hostVideoPlayer.muted) {
-        hostVideoPlayer.muted = true;
-        autoMuted = true;
-        btnMute.textContent = '🔇';
-        hostVideoPlayer.play()
-          .then(() => {
-            hidePlayOverlay();
-            showSoundToast();
-          })
-          .catch(() => showPlayOverlay());
-        return;
-      }
+      // Opsi A: jangan fallback muted — minta gesture lewat overlay
       showPlayOverlay();
     });
 }
@@ -220,12 +197,6 @@ function unlockAudioOnGesture() {
   }
   resumeIfPlaying();
 }
-
-// ===== TOGGLE VIDEO CONTROLS (langsung, tidak menunggu login) =====
-btnToggleControls.addEventListener('click', () => {
-  videoControls.classList.toggle('hidden');
-  btnToggleControls.classList.toggle('active');
-});
 
 // Gesture sejak awal (termasuk klik login) → unlock auto-mute + hak autoplay bersuara
 // Target input: hanya hide toast, JANGAN play() — cegah keyboard mobile gagal buka

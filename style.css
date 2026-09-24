@@ -78,14 +78,8 @@ body {
     color: #ffffff;
 }
 
-#soundToast {
-    max-width: min(92vw, 360px);
-    text-align: center;
-}
-
 @media (max-width: 900px) {
-    #soundToast,
-    .fs-toast#fsToast {
+    #fsToast {
         top: 72px;
         bottom: auto;
     }

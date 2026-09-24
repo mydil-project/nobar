@@ -104,24 +104,11 @@ function showPlayOverlay() {
 function hideSoundToast() {
   clearTimeout(showSoundToast._timer);
   const el = document.getElementById('soundToast');
-  if (el) el.classList.add('hidden');
+  if (el) el.remove();
 }
 
-function showSoundToast() {
-  if (document.activeElement === chatInput) return;
-  let el = document.getElementById('soundToast');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'soundToast';
-    el.className = 'fs-toast';
-    el.textContent = '🔊 Klik di mana saja untuk menyalakan suara';
-    el.addEventListener('click', () => unlockAudioOnGesture());
-    document.body.appendChild(el);
-  }
-  el.classList.remove('hidden');
-  clearTimeout(showSoundToast._timer);
-  showSoundToast._timer = setTimeout(hideSoundToast, 5000);
-}
+// Opsi A: tidak ada toast suara — autoplay selalu bersuara; jika diblokir → overlay play
+function showSoundToast() {}
 
 function resumeIfPlaying() {
   if (!currentUser) return;
@@ -153,32 +140,22 @@ document.addEventListener('pointerdown', onDocumentGesture, true);
 document.addEventListener('keydown', onDocumentGesture, true);
 
 function tryPlay() {
-  if (!autoMuted) userVideoPlayer.muted = false;
+  if (autoMuted) {
+    userVideoPlayer.muted = false;
+    autoMuted = false;
+  }
 
   userVideoPlayer.play()
     .then(() => {
-      autoMuted = userVideoPlayer.muted;
+      autoMuted = false;
       hidePlayOverlay();
-      if (autoMuted) showSoundToast();
-      else hideSoundToast();
     })
     .catch(err => {
       const name = err && err.name;
       if (name === 'NotSupportedError' || name === 'AbortError') {
         return;
       }
-      const blocked = name === 'NotAllowedError' || name === 'SecurityError';
-      if (blocked && !userVideoPlayer.muted) {
-        userVideoPlayer.muted = true;
-        autoMuted = true;
-        userVideoPlayer.play()
-          .then(() => {
-            hidePlayOverlay();
-            showSoundToast();
-          })
-          .catch(() => showPlayOverlay());
-        return;
-      }
+      // Opsi A: jangan fallback muted — minta gesture lewat overlay
       showPlayOverlay();
     });
 }
