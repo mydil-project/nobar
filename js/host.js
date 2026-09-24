@@ -161,6 +161,7 @@ function hideAllToasts() {
 
 // Focus chat siap sebelum login/initAll — cegah keyboard mobile gagal di first-entry
 bindChatInputFocus();
+initKeyboardPadding();
 
 function tryPlay() {
   if (autoMuted) {
@@ -972,6 +973,35 @@ function bindChatInputFocus() {
   if (chatEl) {
     chatEl.addEventListener('pointerdown', hideAllToasts);
   }
+}
+
+function initKeyboardPadding() {
+  if (initKeyboardPadding.done) return;
+  initKeyboardPadding.done = true;
+
+  const vv = window.visualViewport;
+  if (!vv) return;
+
+  const mq = window.matchMedia('(max-width: 900px)');
+  let kbBase = vv.height;
+
+  function apply() {
+    if (!mq.matches) {
+      document.body.style.paddingBottom = '';
+      return;
+    }
+    if (document.fullscreenElement) return;
+    if (vv.height > kbBase - 80) kbBase = Math.max(kbBase, vv.height);
+    const kb = Math.max(0, kbBase - vv.height);
+    document.body.style.paddingBottom = kb > 80 ? Math.ceil(kb) + 'px' : '16px';
+  }
+
+  vv.addEventListener('resize', apply);
+  window.addEventListener('orientationchange', () => {
+    setTimeout(() => { kbBase = vv.height; apply(); }, 300);
+  });
+  document.addEventListener('fullscreenchange', apply);
+  apply();
 }
 
 function initChat() {
