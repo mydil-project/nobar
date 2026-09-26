@@ -191,6 +191,28 @@
         justify-content: center;
     }
 
+    .video-frame:fullscreen .fs-title {
+        padding: 12px 14px 24px;
+    }
+
+    .video-frame:fullscreen .fs-title > span {
+        left: 14px;
+        max-width: calc(100% - 28px);
+        padding: 5px 10px 5px 9px;
+        border-left-width: 3px;
+        font-size: 16px;
+    }
+
+    .fs-title-pos button {
+        width: 40px;
+        height: 40px;
+        font-size: 13px;
+    }
+
+    .fs-title-y {
+        display: none;
+    }
+
     .progress {
         height: 6px;
     }

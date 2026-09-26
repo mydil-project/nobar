@@ -80,8 +80,113 @@ body {
 
 
 /* =====================================================
+   FULLSCREEN MOVIE TITLE
+   Hanya tampil saat .video-frame jadi elemen fullscreen
+   ===================================================== */
+
+.fs-title {
+    display: none;
+}
+
+.video-frame:fullscreen {
+    border: 0;
+    border-radius: 0;
+}
+
+.video-frame:fullscreen .fs-title {
+    display: block;
+
+    position: absolute;
+
+    inset: 0;
+
+    z-index: 5;
+
+    background:
+        linear-gradient(
+            180deg,
+            rgba(0, 0, 0, 0.45),
+            rgba(0, 0, 0, 0) 170px
+        );
+
+    pointer-events: none;
+    user-select: none;
+}
+
+.video-frame:fullscreen .fs-title > span {
+    position: absolute;
+
+    left: 30px;
+    top: var(--fs-title-y, 4%);
+
+    max-width: calc(100% - 60px);
+
+    padding: 7px 14px 7px 12px;
+
+    border-left: 4px solid #e50914;
+
+    border-radius: 6px;
+
+    background: rgba(0, 0, 0, 0.55);
+
+    color: #ffffff;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.3;
+
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+
+/* =====================================================
+   POSISI JUDUL FULLSCREEN (host only, di movie-info)
+   ===================================================== */
+
+.fs-title-pos {
+    display: flex;
+    align-items: center;
+
+    gap: 2px;
+}
+
+.fs-title-pos button {
+    width: 26px;
+    height: 26px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border: 0;
+    border-radius: 6px;
+
+    background: transparent;
+    color: #aeb7c3;
+
+    font-size: 11px;
+
+    cursor: pointer;
+}
+
+.fs-title-pos button:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+}
+
+.fs-title-y {
+    min-width: 30px;
+
+    color: #697484;
+    font-size: 11px;
+    text-align: right;
+}
+
+
+/* =====================================================
    MODAL
-===================================================== */
+   ===================================================== */
 
 .modal-overlay {
     position: fixed;
