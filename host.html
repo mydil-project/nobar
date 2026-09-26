@@ -68,6 +68,8 @@
                         <div class="play-big">▶</div>
                     </div>
 
+                    <div id="hostFsTitle" class="fs-title"><span id="hostFsTitleText">Tidak ada</span></div>
+
                     <div id="hostPlayOverlay" class="autoplay-overlay hidden">
                         <div class="play-big">▶</div>
                         <span>Klik untuk memutar</span>
@@ -121,6 +123,12 @@
                             <button type="button" id="btnSyncMode" class="toggle-switch" aria-pressed="false">
                                 <span class="toggle-knob"></span>
                             </button>
+                        </div>
+                        <div class="fs-title-pos" title="Posisi judul film di layar penuh">
+                            <button type="button" id="btnFsTitleUp" title="Judul lebih ke atas" aria-label="Judul lebih ke atas">▲</button>
+                            <button type="button" id="btnFsTitleDown" title="Judul lebih ke bawah" aria-label="Judul lebih ke bawah">▼</button>
+                            <button type="button" id="btnFsTitleReset" title="Posisi default" aria-label="Posisi default">⟲</button>
+                            <span id="hostFsTitleY" class="fs-title-y">4%</span>
                         </div>
                         <button type="button" id="btnPlayDefault" class="fullscreen-btn" title="Putar film default (Red Bull TV)">▶</button>
                         <button type="button" id="btnToggleControls" class="fullscreen-btn" title="Tampilkan kontrol video">⚙</button>
@@ -230,7 +238,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
-<script type="module" src="js/host.js?v=nobar1"></script>
+<script type="module" src="js/host.js?v=nobar4"></script>
 
 </body>
 </html>
