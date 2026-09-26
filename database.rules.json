@@ -6,10 +6,6 @@
       ".read": "auth != null",
       ".write": "auth != null && auth.uid === 'fFOsbbOhCMOcMXiF5Wf88KpBDe22'"
     },
-    "defaultUrl": {
-      ".read": "auth != null",
-      ".write": "auth != null && auth.uid === 'fFOsbbOhCMOcMXiF5Wf88KpBDe22'"
-    },
     "settings": {
       ".read": "auth != null",
       ".write": "auth != null && auth.uid === 'fFOsbbOhCMOcMXiF5Wf88KpBDe22'"
