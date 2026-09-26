@@ -1,5 +1,5 @@
 import { db, auth, HOST_UID } from './firebase.js';
-import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint, userAvatarHtml } from './utils.js';
+import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint, userAvatarHtml, FS_TITLE_Y_DEFAULT, FS_TITLE_Y_STEP, clampFsTitleY, applyFsTitleY } from './utils.js';
 import {
   ref, onValue, onChildAdded, onChildRemoved, set, push, update, remove, get, serverTimestamp, onDisconnect as fbOnDisconnect, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
@@ -15,6 +15,7 @@ const hostName = $('hostName');
 const hostViewerCountTop = $('hostViewerCountTop');
 const hostChatCount = $('hostChatCount');
 const hostNowTitle = $('hostNowTitle');
+const hostFsTitleText = $('hostFsTitleText');
 const hostVideoPlayer = $('hostVideoPlayer');
 const hostYoutubeFrame = $('hostYoutubeFrame');
 const hostNoVideo = $('hostNoVideo');
@@ -48,6 +49,10 @@ const nextFilmBarCountdown = $('nextFilmBarCountdown');
 const nextFilmBarTitle = $('nextFilmBarTitle');
 const btnSyncMode = $('btnSyncMode');
 const syncModeLabel = $('syncModeLabel');
+const btnFsTitleUp = $('btnFsTitleUp');
+const btnFsTitleDown = $('btnFsTitleDown');
+const btnFsTitleReset = $('btnFsTitleReset');
+const hostFsTitleY = $('hostFsTitleY');
 const btnPlayDefault = $('btnPlayDefault');
 const rescheduleModal = $('rescheduleModal');
 const rescheduleTitle = $('rescheduleTitle');
@@ -95,6 +100,11 @@ function fmtTime(sec) {
   const s = sec % 60;
   const pad = n => (n < 10 ? '0' : '') + n;
   return h > 0 ? h + ':' + pad(m) + ':' + pad(s) : pad(m) + ':' + pad(s);
+}
+
+function setNowTitle(text) {
+  hostNowTitle.textContent = text;
+  hostFsTitleText.textContent = text;
 }
 
 // ===== FIREBASE OFFSET =====
@@ -202,6 +212,35 @@ btnSyncMode.addEventListener('click', async () => {
   const next = syncMode === 'sync' ? 'async' : 'sync';
   await set(ref(db, 'settings/syncMode'), next);
 });
+
+// ===== POSISI JUDUL DI LAYAR PENUH (host tulis, semua perangkat baca) =====
+let fsTitleY = FS_TITLE_Y_DEFAULT;
+
+function renderFsTitleY() {
+  if (hostFsTitleY) hostFsTitleY.textContent = fsTitleY + '%';
+}
+
+async function saveFsTitleY(value) {
+  const next = clampFsTitleY(value);
+  if (next === fsTitleY) return;
+  fsTitleY = next;
+  applyFsTitleY($('hostPlayer'), next);
+  renderFsTitleY();
+  try {
+    await set(ref(db, 'settings/fsTitleY'), next);
+  } catch (e) {
+    console.error('Gagal simpan posisi judul:', e);
+  }
+}
+
+onValue(ref(db, 'settings/fsTitleY'), snap => {
+  fsTitleY = applyFsTitleY($('hostPlayer'), snap.val());
+  renderFsTitleY();
+});
+
+btnFsTitleUp.addEventListener('click', () => saveFsTitleY(fsTitleY + FS_TITLE_Y_STEP));
+btnFsTitleDown.addEventListener('click', () => saveFsTitleY(fsTitleY - FS_TITLE_Y_STEP));
+btnFsTitleReset.addEventListener('click', () => saveFsTitleY(FS_TITLE_Y_DEFAULT));
 
 btnPlayDefault.addEventListener('click', () => {
   playDefault(true);
@@ -324,6 +363,10 @@ function initPlayer() {
 
   hostVideoPlayer.addEventListener('contextmenu', e => e.preventDefault());
 
+  // Jangan biarkan browser ambil alih fullscreen ke elemen <video> (dbl-klik / dbl-tap):
+  // .video-frame harus tetap elemen fullscreen agar .fs-title tetap tampil
+  hostVideoPlayer.addEventListener('dblclick', e => e.preventDefault());
+
   hostVideoPlayer.addEventListener('play', hidePlayOverlay);
 
   hostVideoPlayer.addEventListener('canplay', () => {
@@ -436,7 +479,7 @@ function loadVideo(url) {
     hostVideoPlayer.style.display = 'none';
     hideYoutubeFrame();
     hostNoVideo.classList.remove('hidden');
-    hostNowTitle.textContent = 'Tidak ada';
+    setNowTitle('Tidak ada');
     return;
   }
 
@@ -614,7 +657,7 @@ function listenState() {
       loadVideo(state.currentUrl);
     }
 
-    hostNowTitle.textContent = state.currentTitle || 'Tidak ada';
+    setNowTitle(state.currentTitle || 'Tidak ada');
     btnPlayPause.textContent = state.playing ? '⏸' : '▶';
     refreshPlaylistUi();
 
@@ -1148,12 +1191,15 @@ function updateNextFilmInfo() {
 function initFullscreen() {
   const btnFS = $('btnFullscreen');
   const btnFSAlt = $('btnFullscreenAlt');
+  const player = $('hostPlayer');
 
   const toggleFullscreen = () => {
-    if (document.fullscreenElement) {
+    if (document.fullscreenElement === player) {
       document.exitFullscreen();
     } else {
-      $('hostPlayer').requestFullscreen().catch(() => {});
+      // Tutup race dengan tryAutoFullscreen(): klik manual =-owned, jangan dicuri auto-fullscreen
+      fsRequested = true;
+      player.requestFullscreen().catch(() => {});
     }
   };
 
@@ -1161,7 +1207,7 @@ function initFullscreen() {
   if (btnFSAlt) btnFSAlt.addEventListener('click', toggleFullscreen);
 
   document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) {
+    if (document.fullscreenElement === player) {
       btnFS.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
     } else {
       btnFS.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';

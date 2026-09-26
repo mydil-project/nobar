@@ -14,6 +14,24 @@ export function userAvatarHtml(user) {
   return photo + '<span class="name">' + escapeHtml(user.name || '?') + '</span>';
 }
 
+export const FS_TITLE_Y_DEFAULT = 4;
+export const FS_TITLE_Y_MIN = 0;
+export const FS_TITLE_Y_MAX = 60;
+export const FS_TITLE_Y_STEP = 2;
+
+export function clampFsTitleY(value) {
+  const n = Number(value);
+  const safe = isFinite(n) ? Math.round(n) : FS_TITLE_Y_DEFAULT;
+  return Math.min(FS_TITLE_Y_MAX, Math.max(FS_TITLE_Y_MIN, safe));
+}
+
+export function applyFsTitleY(player, value) {
+  if (!player) return FS_TITLE_Y_DEFAULT;
+  const v = clampFsTitleY(value);
+  player.style.setProperty('--fs-title-y', v + '%');
+  return v;
+}
+
 export function isDesktopPointer() {
   return window.matchMedia('(pointer: fine)').matches;
 }

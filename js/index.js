@@ -1,5 +1,5 @@
 import { db, auth, HOST_UID } from './firebase.js';
-import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint, userAvatarHtml } from './utils.js';
+import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint, userAvatarHtml, applyFsTitleY } from './utils.js';
 import {
   ref, onValue, onChildAdded, onChildRemoved, push, update, get, serverTimestamp, onDisconnect as fbOnDisconnect, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
@@ -15,6 +15,7 @@ const userName = $('userName');
 const userViewerCountTop = $('userViewerCountTop');
 const userChatCount = $('userChatCount');
 const userNowTitle = $('userNowTitle');
+const userFsTitleText = $('userFsTitleText');
 const userVideoPlayer = $('userVideoPlayer');
 const userYoutubeFrame = $('userYoutubeFrame');
 const userNoVideo = $('userNoVideo');
@@ -62,6 +63,11 @@ function isYoutubeUrl(url) {
 function parseYoutubeId(url) {
   const m = String(url).match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);
   return m ? m[1] : null;
+}
+
+function setNowTitle(text) {
+  userNowTitle.textContent = text;
+  userFsTitleText.textContent = text;
 }
 
 // ===== FIREBASE OFFSET =====
@@ -230,6 +236,7 @@ async function initAll() {
   initPlayer();
   initViewers();
   listenSyncMode();
+  listenFsTitlePos();
   listenState();
   listenPlaylistMeta();
   startNextFilmCountdown();
@@ -251,6 +258,10 @@ async function initAll() {
 // ===== PLAYER (sinkron saja, tanpa kontrol) =====
 function initPlayer() {
   userVideoPlayer.addEventListener('contextmenu', e => e.preventDefault());
+
+  // Jangan biarkan browser ambil alih fullscreen ke elemen <video> (dbl-klik / dbl-tap):
+  // .video-frame harus tetap elemen fullscreen agar .fs-title tetap tampil
+  userVideoPlayer.addEventListener('dblclick', e => e.preventDefault());
 
   userVideoPlayer.addEventListener('play', hidePlayOverlay);
 
@@ -479,14 +490,20 @@ function listenSyncMode() {
         lastLoadedUrl = currentState.currentUrl;
         loadVideo(currentState.currentUrl);
       }
-      userNowTitle.textContent = currentState.currentTitle || 'Menunggu host...';
+      setNowTitle(currentState.currentTitle || 'Menunggu host...');
       syncPlayback(true);
     }
   });
 }
 
+function listenFsTitlePos() {
+  onValue(ref(db, 'settings/fsTitleY'), snap => {
+    applyFsTitleY($('userPlayer'), snap.val());
+  });
+}
+
 function asyncSwitchTo(url, title, id, pos) {
-  if (title) userNowTitle.textContent = title;
+  if (title) setNowTitle(title);
   if (url === lastLoadedUrl && id === asyncActiveId) return;
   lastLoadedUrl = url;
   asyncActiveId = id;
@@ -549,7 +566,7 @@ function tickAsync() {
     asyncGapId = null;
     asyncActiveId = active.id;
     pendingAsyncPos = pos;
-    userNowTitle.textContent = active.title;
+    setNowTitle(active.title);
     lastLoadedUrl = active.url;
     loadVideo(active.url);
     return;
@@ -587,7 +604,7 @@ function listenState() {
       userVideoPlayer.style.display = 'none';
       hideYoutubeFrame();
       userNoVideo.classList.remove('hidden');
-      userNowTitle.textContent = 'Menunggu host...';
+      setNowTitle('Menunggu host...');
       return;
     }
 
@@ -597,7 +614,7 @@ function listenState() {
       loadVideo(state.currentUrl);
     }
 
-    userNowTitle.textContent = state.currentTitle || 'Menunggu host...';
+    setNowTitle(state.currentTitle || 'Menunggu host...');
 
     syncPlayback();
   });
@@ -859,12 +876,15 @@ function addChatMessage(msg, msgId) {
 function initFullscreen() {
   const btn = $('btnUserFullscreen');
   if (!btn) return;
+  const player = $('userPlayer');
 
   btn.addEventListener('click', () => {
-    if (document.fullscreenElement) {
+    if (document.fullscreenElement === player) {
       document.exitFullscreen();
     } else {
-      $('userPlayer').requestFullscreen().catch(() => {});
+      // Tutup race dengan tryAutoFullscreen(): klik manual =-owned, jangan dicuri auto-fullscreen
+      fsRequested = true;
+      player.requestFullscreen().catch(() => {});
     }
   });
 }
