@@ -1,5 +1,5 @@
 import { db, auth, HOST_UID } from './firebase.js';
-import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint } from './utils.js';
+import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint, userAvatarHtml } from './utils.js';
 import {
   ref, onValue, onChildAdded, onChildRemoved, set, push, update, remove, get, serverTimestamp, onDisconnect as fbOnDisconnect, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
@@ -63,9 +63,10 @@ let currentUser = null;
 let serverOffset = 0;
 let timeSynced = false;
 const afterTimeSync = [];
-let autoMuted = false;
 let fsRequested = false;
 let playlistData = [];
+let playlistItemRefs = [];
+let playlistBadgeRefs = [];
 let currentState = {};
 let lastLoadedUrl = '';
 let inited = false;
@@ -126,15 +127,6 @@ function showPlayOverlay() {
   if (hostPlayOverlay) hostPlayOverlay.classList.remove('hidden');
 }
 
-function hideSoundToast() {
-  clearTimeout(showSoundToast._timer);
-  const el = document.getElementById('soundToast');
-  if (el) el.remove();
-}
-
-// Opsi A: tidak ada toast suara — autoplay selalu bersuara; jika diblokir → overlay play
-function showSoundToast() {}
-
 function resumeIfPlaying() {
   if (!sessionActive || !hostVideoPlayer.src) return;
   if (isYoutubeUrl(currentState.currentUrl)) return;
@@ -154,7 +146,6 @@ btnToggleControls.addEventListener('click', () => {
 });
 
 function hideAllToasts() {
-  hideSoundToast();
   const fs = document.getElementById('fsToast');
   if (fs) fs.classList.add('hidden');
 }
@@ -164,15 +155,8 @@ bindChatInputFocus();
 initKeyboardPadding();
 
 function tryPlay() {
-  if (autoMuted) {
-    hostVideoPlayer.muted = false;
-    autoMuted = false;
-    btnMute.textContent = '🔊';
-  }
-
   hostVideoPlayer.play()
     .then(() => {
-      autoMuted = false;
       hidePlayOverlay();
       btnMute.textContent = hostVideoPlayer.muted ? '🔇' : '🔊';
     })
@@ -187,22 +171,13 @@ function tryPlay() {
 }
 
 function unlockAudioOnGesture() {
-  hideSoundToast();
-  if (hostVideoPlayer.muted && autoMuted) {
-    hostVideoPlayer.muted = false;
-    autoMuted = false;
-    btnMute.textContent = '🔊';
-  }
   resumeIfPlaying();
 }
 
-// Gesture sejak awal (termasuk klik login) → unlock auto-mute + hak autoplay bersuara
-// Target input: hanya hide toast, JANGAN play() — cegah keyboard mobile gagal buka
+// Gesture sejak awal (termasuk klik login) → hak autoplay bersuara
+// Target editable: JANGAN play() — cegah keyboard mobile gagal buka
 function onDocumentGesture(e) {
-  if (isEditableTarget(e.target)) {
-    hideSoundToast();
-    return;
-  }
+  if (isEditableTarget(e.target)) return;
   unlockAudioOnGesture();
 }
 document.addEventListener('pointerdown', onDocumentGesture, true);
@@ -240,7 +215,12 @@ onAuthStateChanged(auth, async user => {
     reanchorPausedAt = 0;
     await registerHost(user);
     hostPage.classList.remove('hidden');
-    hostPhoto.src = user.photoURL || '';
+    if (user.photoURL) {
+      hostPhoto.style.display = '';
+      hostPhoto.src = user.photoURL;
+    } else {
+      hostPhoto.style.display = 'none';
+    }
     hostName.textContent = user.displayName || 'Host';
     hideAllToasts();
     initAll();
@@ -250,11 +230,9 @@ onAuthStateChanged(auth, async user => {
     sessionActive = false;
     reanchorPausedAt = 0;
     lastLoadedUrl = '';
-    autoMuted = false;
     if (hostVideoPlayer) {
       hostVideoPlayer.muted = false;
       btnMute.textContent = '🔊';
-      hideSoundToast();
       hostVideoPlayer.pause();
     }
     stopVideoElements();
@@ -272,7 +250,6 @@ async function registerHost(user) {
   const userRef = ref(db, 'users/' + user.uid);
   await set(userRef, {
     name: user.displayName || 'Host',
-    email: user.email || '',
     photo: user.photoURL || '',
     role: 'host',
     online: true,
@@ -289,12 +266,6 @@ async function registerHost(user) {
         online: false,
         lastSeen: serverTimestamp()
       });
-    }
-  });
-
-  window.addEventListener('beforeunload', () => {
-    if (currentUser) {
-      update(ref(db, 'users/' + currentUser.uid), { online: false });
     }
   });
 }
@@ -363,9 +334,7 @@ function initPlayer() {
   if (hostPlayOverlay) {
     hostPlayOverlay.addEventListener('click', () => {
       hostVideoPlayer.muted = false;
-      autoMuted = false;
       btnMute.textContent = '🔊';
-      hideSoundToast();
       hostVideoPlayer.play()
         .then(hidePlayOverlay)
         .catch(() => showPlayOverlay());
@@ -396,9 +365,7 @@ function initPlayer() {
 
   btnMute.addEventListener('click', () => {
     hostVideoPlayer.muted = !hostVideoPlayer.muted;
-    autoMuted = false;
     btnMute.textContent = hostVideoPlayer.muted ? '🔇' : '🔊';
-    if (!hostVideoPlayer.muted) hideSoundToast();
   });
 
   btnToggleTime.addEventListener('click', () => {
@@ -460,10 +427,8 @@ function stopVideoElements() {
 }
 
 function loadVideo(url) {
-  autoMuted = false;
   hostVideoPlayer.muted = false;
   btnMute.textContent = '🔊';
-  hideSoundToast();
   hidePlayOverlay();
 
   if (!url) {
@@ -524,12 +489,13 @@ function loadVideo(url) {
         setTimeout(startFirstPlay, 1500);
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) {
-          console.error('HLS error:', data.type, data.details);
-          if (hls) {
-            try { hls.startLoad(); } catch (_) {}
-          }
-        }
+        if (!data.fatal) return;
+        console.error('HLS error:', data.type, data.details);
+        if (!hls) return;
+        try {
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+          else hls.startLoad();
+        } catch (_) {}
       });
     } else if (hostVideoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
       hostVideoPlayer.src = url;
@@ -564,15 +530,12 @@ async function playDefault(force = false) {
     }
   }
 
-  await set(ref(db, 'defaultUrl'), DEFAULT_STREAM_URL);
   await set(ref(db, 'state'), {
     currentUrl: DEFAULT_STREAM_URL,
     currentTitle: DEFAULT_STREAM_TITLE,
     playing: true,
     playbackStartTimestamp: Date.now() + serverOffset,
     videoPosition: 0,
-    currentPlaylistIndex: -1,
-    isDefault: true,
     isPlaylistItem: false,
     activePlaylistId: null
   });
@@ -653,6 +616,7 @@ function listenState() {
 
     hostNowTitle.textContent = state.currentTitle || 'Tidak ada';
     btnPlayPause.textContent = state.playing ? '⏸' : '▶';
+    refreshPlaylistUi();
 
     applyHostSync();
   });
@@ -696,17 +660,14 @@ async function checkSchedule() {
     }
 
     await update(ref(db, 'playlist/' + matchedItem.id), { status: 'active' });
-    const idx = playlistData.indexOf(matchedItem);
     await set(ref(db, 'state'), {
       currentUrl: matchedItem.url,
       currentTitle: matchedItem.title,
-      currentPlaylistIndex: idx,
       playing: true,
       playbackStartTimestamp: Date.now() + serverOffset,
       videoPosition: 0,
       isPlaylistItem: true,
-      activePlaylistId: matchedItem.id,
-      isDefault: false
+      activePlaylistId: matchedItem.id
     });
   } finally {
     scheduleBusy = false;
@@ -825,44 +786,39 @@ async function playPlaylistItem(idx) {
   await set(ref(db, 'state'), {
     currentUrl: item.url,
     currentTitle: item.title,
-    currentPlaylistIndex: idx,
     playing: true,
     playbackStartTimestamp: Date.now() + serverOffset,
     videoPosition: 0,
     isPlaylistItem: true,
-    activePlaylistId: item.id,
-    isDefault: false
+    activePlaylistId: item.id
   });
+}
+
+function scheduleBadgeFor(item, now) {
+  if (!item.scheduledTime) return null;
+
+  const schedMs = new Date(item.scheduledTime).getTime();
+  if (item.status === 'completed') return { label: 'Selesai', cls: 'completed' };
+  if (now >= schedMs) return { label: 'Sedang Tayang', cls: 'active' };
+
+  const schedDate = new Date(item.scheduledTime);
+  const timeStr = schedDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  const dateStr = schedDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+  const diff = schedMs - now;
+  const hrs = Math.floor(diff / 3600000);
+  const mins = Math.floor((diff % 3600000) / 60000);
+
+  return {
+    label: timeStr + ' ' + dateStr + ' (' + (hrs > 0 ? hrs + 'j ' : '') + mins + 'm lagi)',
+    cls: 'pending'
+  };
 }
 
 function renderPlaylist() {
   const now = Date.now() + serverOffset;
 
   playlistList.innerHTML = playlistData.map((item, i) => {
-    let scheduleLabel = '';
-    let badgeClass = '';
-
-    if (item.scheduledTime) {
-      const schedMs = new Date(item.scheduledTime).getTime();
-      const schedDate = new Date(item.scheduledTime);
-      const timeStr = schedDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-      const dateStr = schedDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
-
-      if (item.status === 'completed') {
-        scheduleLabel = 'Selesai';
-        badgeClass = 'completed';
-      } else if (now >= schedMs) {
-        scheduleLabel = 'Sedang Tayang';
-        badgeClass = 'active';
-      } else {
-        const diff = schedMs - now;
-        const hrs = Math.floor(diff / 3600000);
-        const mins = Math.floor((diff % 3600000) / 60000);
-        scheduleLabel = timeStr + ' ' + dateStr + ' (' + (hrs > 0 ? hrs + 'j ' : '') + mins + 'm lagi)';
-        badgeClass = 'pending';
-      }
-    }
-
+    const badge = scheduleBadgeFor(item, now);
     const isActive = currentState.activePlaylistId === item.id;
 
     return '<div class="playlist-item ' + (isActive ? 'active' : '') + '" data-idx="' + i + '">' +
@@ -871,7 +827,7 @@ function renderPlaylist() {
         '<div class="title">' + escapeHtml(item.title) + '</div>' +
         '<div class="url">' + escapeHtml(item.url) + '</div>' +
       '</div>' +
-      (scheduleLabel ? '<span class="schedule-badge ' + badgeClass + '">' + scheduleLabel + '</span>' : '') +
+      (badge ? '<span class="schedule-badge ' + badge.cls + '">' + badge.label + '</span>' : '') +
       '<button class="btn-sched" data-id="' + item.id + '" title="Ubah jadwal">' +
         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>' +
       '</button>' +
@@ -883,6 +839,15 @@ function renderPlaylist() {
       '</button>' +
     '</div>';
   }).join('');
+
+  playlistItemRefs = Array.from(playlistList.querySelectorAll('.playlist-item'));
+  playlistBadgeRefs = playlistItemRefs.map((el, i) => {
+    const item = playlistData[i];
+    return {
+      itemId: item ? item.id : null,
+      badge: el ? el.querySelector('.schedule-badge') : null
+    };
+  });
 
   playlistList.querySelectorAll('.btn-sched').forEach(btn => {
     btn.addEventListener('click', e => {
@@ -912,6 +877,27 @@ function renderPlaylist() {
   });
 }
 
+function refreshPlaylistUi() {
+  const now = Date.now() + serverOffset;
+
+  for (let i = 0; i < playlistItemRefs.length; i++) {
+    const el = playlistItemRefs[i];
+    const ref = playlistBadgeRefs[i];
+    const item = playlistData[i];
+    if (!el || !ref || !item || item.id !== ref.itemId) continue;
+
+    el.classList.toggle('active', currentState.activePlaylistId === item.id);
+
+    if (!ref.badge) continue;
+    const info = scheduleBadgeFor(item, now);
+    if (!info) continue;
+    if (ref.badge.textContent !== info.label) ref.badge.textContent = info.label;
+    if (ref.badge.className !== 'schedule-badge ' + info.cls) {
+      ref.badge.className = 'schedule-badge ' + info.cls;
+    }
+  }
+}
+
 // ===== VIEWERS =====
 function initViewers() {
   onValue(ref(db, 'users'), snap => {
@@ -924,14 +910,10 @@ function initViewers() {
       if (!u.online) return;
       count++;
       if (u.role === 'host') {
-        hostHtml = '<div class="viewer-item-host">' +
-          '<img src="' + escapeHtml(u.photo || '') + '" alt="">' +
-          '<span class="name">' + escapeHtml(u.name) + '</span>' +
+        hostHtml = '<div class="viewer-item-host">' + userAvatarHtml(u) +
           '<span class="badge">HOST</span></div>';
       } else {
-        userHtml += '<div class="viewer-item">' +
-          '<img src="' + escapeHtml(u.photo || '') + '" alt="">' +
-          '<span class="name">' + escapeHtml(u.name) + '</span>' +
+        userHtml += '<div class="viewer-item">' + userAvatarHtml(u) +
           '<span class="online-dot"></span></div>';
       }
     });
@@ -962,6 +944,7 @@ function bindChatInputFocus() {
   if (chatInputWrap) {
     chatInputWrap.addEventListener('pointerdown', e => {
       hideAllToasts();
+      if (e.target.closest('button')) return;
       if (e.target !== chatInput) e.preventDefault();
       chatInput.focus();
     });
@@ -986,11 +969,10 @@ function initKeyboardPadding() {
   let kbBase = vv.height;
 
   function apply() {
-    if (!mq.matches) {
+    if (!mq.matches || document.fullscreenElement) {
       document.body.style.paddingBottom = '';
       return;
     }
-    if (document.fullscreenElement) return;
     if (vv.height > kbBase - 80) kbBase = Math.max(kbBase, vv.height);
     const kb = Math.max(0, kbBase - vv.height);
     document.body.style.paddingBottom = kb > 80 ? Math.ceil(kb) + 'px' : '16px';
@@ -1001,6 +983,8 @@ function initKeyboardPadding() {
     setTimeout(() => { kbBase = vv.height; apply(); }, 300);
   });
   document.addEventListener('fullscreenchange', apply);
+  if (mq.addEventListener) mq.addEventListener('change', apply);
+  else if (mq.addListener) mq.addListener(apply);
   apply();
 }
 
@@ -1115,7 +1099,10 @@ function addChatMessage(msg, msgId) {
 
 // ===== NEXT FILM COUNTDOWN =====
 function startNextFilmCountdown() {
-  setInterval(updateNextFilmInfo, 1000);
+  setInterval(() => {
+    updateNextFilmInfo();
+    refreshPlaylistUi();
+  }, 1000);
 }
 
 function updateNextFilmInfo() {

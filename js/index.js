@@ -1,5 +1,5 @@
 import { db, auth, HOST_UID } from './firebase.js';
-import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint } from './utils.js';
+import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint, userAvatarHtml } from './utils.js';
 import {
   ref, onValue, onChildAdded, onChildRemoved, push, update, get, serverTimestamp, onDisconnect as fbOnDisconnect, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
@@ -41,7 +41,6 @@ let hls = null;
 let currentUser = null;
 let serverOffset = 0;
 let timeSynced = false;
-let autoMuted = false;
 let fsRequested = false;
 let initialSeekDone = false;
 let playlistData = [];
@@ -71,7 +70,7 @@ onValue(ref(db, '.info/serverTimeOffset'), snap => {
   if (!timeSynced) {
     timeSynced = true;
     if (watchMode !== 'async') {
-      if (userVideoPlayer.readyState >= 2 && !initialSeekDone) {
+      if (userVideoPlayer.readyState >= 2 && currentState.currentUrl && !initialSeekDone) {
         initialSeekDone = true;
         syncPlayback(true);
       } else {
@@ -98,15 +97,6 @@ function showPlayOverlay() {
   if (userPlayOverlay) userPlayOverlay.classList.remove('hidden');
 }
 
-function hideSoundToast() {
-  clearTimeout(showSoundToast._timer);
-  const el = document.getElementById('soundToast');
-  if (el) el.remove();
-}
-
-// Opsi A: tidak ada toast suara — autoplay selalu bersuara; jika diblokir → overlay play
-function showSoundToast() {}
-
 function resumeIfPlaying() {
   if (!currentUser) return;
   if (watchMode === 'async') {
@@ -125,26 +115,17 @@ function isEditableTarget(target) {
 }
 
 // Gesture sejak awal (termasuk klik login) → hak autoplay bersuara
-// Target input: hanya hide toast, JANGAN play() — cegah keyboard mobile gagal buka
+// Target editable: JANGAN play() — cegah keyboard mobile gagal buka
 function onDocumentGesture(e) {
-  if (isEditableTarget(e.target)) {
-    hideSoundToast();
-    return;
-  }
+  if (isEditableTarget(e.target)) return;
   unlockAudioOnGesture();
 }
 document.addEventListener('pointerdown', onDocumentGesture, true);
 document.addEventListener('keydown', onDocumentGesture, true);
 
 function tryPlay() {
-  if (autoMuted) {
-    userVideoPlayer.muted = false;
-    autoMuted = false;
-  }
-
   userVideoPlayer.play()
     .then(() => {
-      autoMuted = false;
       hidePlayOverlay();
     })
     .catch(err => {
@@ -158,16 +139,13 @@ function tryPlay() {
 }
 
 function unlockAudioOnGesture() {
-  hideSoundToast();
   if (userVideoPlayer.muted) {
     userVideoPlayer.muted = false;
-    autoMuted = false;
   }
   resumeIfPlaying();
 }
 
 function hideAllToasts() {
-  hideSoundToast();
   const fs = document.getElementById('fsToast');
   if (fs) fs.classList.add('hidden');
 }
@@ -196,10 +174,8 @@ onAuthStateChanged(auth, user => {
     currentUser = null;
     lastLoadedUrl = '';
     initialSeekDone = false;
-    autoMuted = false;
     if (userVideoPlayer) {
       userVideoPlayer.muted = false;
-      hideSoundToast();
       userVideoPlayer.pause();
     }
     stopVideoElements();
@@ -218,7 +194,7 @@ async function registerViewer(user) {
 
   await update(userRef, {
     name: user.displayName || 'Penonton',
-    email: user.email || '',
+    email: null,
     photo: user.photoURL || '',
     role: 'viewer',
     online: true,
@@ -235,12 +211,6 @@ async function registerViewer(user) {
         online: false,
         lastSeen: serverTimestamp()
       });
-    }
-  });
-
-  window.addEventListener('beforeunload', () => {
-    if (currentUser) {
-      update(ref(db, 'users/' + currentUser.uid), { online: false });
     }
   });
 }
@@ -298,8 +268,6 @@ function initPlayer() {
   if (userPlayOverlay) {
     userPlayOverlay.addEventListener('click', () => {
       userVideoPlayer.muted = false;
-      autoMuted = false;
-      hideSoundToast();
       userVideoPlayer.play()
         .then(hidePlayOverlay)
         .catch(() => showPlayOverlay());
@@ -343,9 +311,7 @@ function stopVideoElements() {
 
 function loadVideo(url) {
   hidePlayOverlay();
-  autoMuted = false;
   userVideoPlayer.muted = false;
-  hideSoundToast();
 
   if (!url) {
     stopVideoElements();
@@ -406,12 +372,13 @@ function loadVideo(url) {
         setTimeout(startFirstPlay, 1500);
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) {
-          console.error('HLS error:', data.type, data.details);
-          if (hls) {
-            try { hls.startLoad(); } catch (_) {}
-          }
-        }
+        if (!data.fatal) return;
+        console.error('HLS error:', data.type, data.details);
+        if (!hls) return;
+        try {
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+          else hls.startLoad();
+        } catch (_) {}
       });
     } else if (userVideoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
       userVideoPlayer.src = url;
@@ -712,18 +679,11 @@ function initViewers() {
     Object.values(users).forEach(u => {
       if (!u.online) return;
       count++;
-      const photoHtml = u.photo
-        ? '<img src="' + escapeHtml(u.photo) + '" alt="">'
-        : '<div class="message-avatar">' + escapeHtml(String(u.name || '?').charAt(0).toUpperCase()) + '</div>';
       if (u.role === 'host') {
-        hostHtml = '<div class="viewer-item-host">' +
-          photoHtml +
-          '<span class="name">' + escapeHtml(u.name) + '</span>' +
+        hostHtml = '<div class="viewer-item-host">' + userAvatarHtml(u) +
           '<span class="badge">HOST</span></div>';
       } else {
-        userHtml += '<div class="viewer-item">' +
-          photoHtml +
-          '<span class="name">' + escapeHtml(u.name) + '</span>' +
+        userHtml += '<div class="viewer-item">' + userAvatarHtml(u) +
           '<span class="online-dot"></span></div>';
       }
     });
@@ -754,6 +714,7 @@ function bindChatInputFocus() {
   if (chatInputWrap) {
     chatInputWrap.addEventListener('pointerdown', e => {
       hideAllToasts();
+      if (e.target.closest('button')) return;
       if (e.target !== chatInput) e.preventDefault();
       chatInput.focus();
     });
@@ -778,11 +739,10 @@ function initKeyboardPadding() {
   let kbBase = vv.height;
 
   function apply() {
-    if (!mq.matches) {
+    if (!mq.matches || document.fullscreenElement) {
       document.body.style.paddingBottom = '';
       return;
     }
-    if (document.fullscreenElement) return;
     if (vv.height > kbBase - 80) kbBase = Math.max(kbBase, vv.height);
     const kb = Math.max(0, kbBase - vv.height);
     document.body.style.paddingBottom = kb > 80 ? Math.ceil(kb) + 'px' : '16px';
@@ -793,6 +753,8 @@ function initKeyboardPadding() {
     setTimeout(() => { kbBase = vv.height; apply(); }, 300);
   });
   document.addEventListener('fullscreenchange', apply);
+  if (mq.addEventListener) mq.addEventListener('change', apply);
+  else if (mq.addListener) mq.addListener(apply);
   apply();
 }
 

@@ -22,7 +22,6 @@ async function routeAfterLogin(user) {
     if (user.uid === HOST_UID) {
       await set(userRef, {
         name: user.displayName || 'Host',
-        email: user.email || '',
         photo: user.photoURL || '',
         role: 'host',
         online: true,
@@ -34,7 +33,7 @@ async function routeAfterLogin(user) {
 
     await update(userRef, {
       name: user.displayName || 'Penonton',
-      email: user.email || '',
+      email: null,
       photo: user.photoURL || '',
       role: 'viewer',
       online: true,

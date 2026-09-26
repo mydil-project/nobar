@@ -7,6 +7,13 @@ export function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+export function userAvatarHtml(user) {
+  const photo = user.photo
+    ? '<img src="' + escapeHtml(user.photo) + '" alt="">'
+    : '<div class="message-avatar">' + escapeHtml(String(user.name || '?').charAt(0).toUpperCase()) + '</div>';
+  return photo + '<span class="name">' + escapeHtml(user.name || '?') + '</span>';
+}
+
 export function isDesktopPointer() {
   return window.matchMedia('(pointer: fine)').matches;
 }
