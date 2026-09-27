@@ -70,6 +70,16 @@
 
                     <div id="hostFsTitle" class="fs-title"><span id="hostFsTitleText">Tidak ada</span></div>
 
+                    <div id="hostFsViewers" class="fs-corner"><span id="hostFsViewersText">👥 0</span></div>
+
+                    <div id="hostFsMsg" class="fs-msg hidden">
+                        <div class="fs-msg-avatar" id="hostFsMsgAvatar">?</div>
+                        <div class="fs-msg-body">
+                            <strong id="hostFsMsgName">-</strong>
+                            <p class="fs-msg-text" id="hostFsMsgText">-</p>
+                        </div>
+                    </div>
+
                     <div id="hostPlayOverlay" class="autoplay-overlay hidden">
                         <div class="play-big">▶</div>
                         <span>Klik untuk memutar</span>
@@ -213,7 +223,7 @@
             <div id="chatMessages" class="chat-messages"></div>
 
             <div class="chat-input">
-                <input id="chatInput" type="text" placeholder="Tulis pesan...">
+                <input id="chatInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" placeholder="Tulis pesan...">
                 <button id="btnChatSend" type="button" title="Kirim">➤</button>
             </div>
 
@@ -238,7 +248,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
-<script type="module" src="js/host.js?v=nobar4"></script>
+    <script type="module" src="js/host.js?v=nobar12"></script>
 
 </body>
 </html>
