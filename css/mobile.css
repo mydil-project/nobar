@@ -121,6 +121,40 @@
         font-size: 16px;
     }
 
+    .video-frame:fullscreen .fs-title > span {
+        font-size: 15px;
+    }
+
+    .fs-corner {
+        right: 14px;
+    }
+
+    .fs-corner > span {
+        padding: 5px 10px;
+        font-size: 13px;
+    }
+
+    .fs-msg {
+        left: 14px;
+        bottom: 66px;
+        max-width: 60%;
+    }
+
+    .fs-msg-avatar,
+    .fs-msg-avatar img {
+        width: 24px;
+        height: 24px;
+        font-size: 11px;
+    }
+
+    .fs-msg-body strong {
+        font-size: 12px;
+    }
+
+    .fs-msg-text {
+        font-size: 13px;
+    }
+
     .header-right {
         gap: 12px;
     }
@@ -197,10 +231,43 @@
 
     .video-frame:fullscreen .fs-title > span {
         left: 14px;
-        max-width: calc(100% - 28px);
+        max-width: calc(100% - 110px);
         padding: 5px 10px 5px 9px;
         border-left-width: 3px;
-        font-size: 16px;
+        font-size: 14px;
+    }
+
+    .fs-corner {
+        right: 10px;
+    }
+
+    .fs-corner > span {
+        padding: 4px 9px;
+        font-size: 12px;
+    }
+
+    .fs-msg {
+        left: 10px;
+        bottom: 62px;
+        max-width: 70%;
+        gap: 8px;
+        padding: 8px 10px;
+        border-left-width: 3px;
+    }
+
+    .fs-msg-avatar,
+    .fs-msg-avatar img {
+        width: 24px;
+        height: 24px;
+        font-size: 11px;
+    }
+
+    .fs-msg-body strong {
+        font-size: 12px;
+    }
+
+    .fs-msg-text {
+        font-size: 12px;
     }
 
     .fs-title-pos button {
@@ -367,5 +434,60 @@
 
     .playlist.panel-content.active {
         max-height: 280px;
+    }
+}
+
+
+/* HP landscape bisa > 900px (mis. 932px) → tetap kecilkan judul fullscreen */
+
+@media (max-height: 480px) and (min-width: 561px) {
+
+    .video-frame:fullscreen .fs-title > span {
+        font-size: 15px;
+    }
+
+    .fs-corner > span {
+        font-size: 13px;
+    }
+
+    .fs-msg {
+        left: 14px;
+        bottom: 64px;
+        max-width: 55%;
+    }
+
+    .fs-msg-text {
+        font-size: 12px;
+    }
+}
+
+
+/* =====================================================
+   VIEWPORT PENDEK (HP/tablet landscape, jendela kecil)
+   Wajib bisa digulir: kalau tidak, kolom chat + input
+   terpotong overflow:hidden saat keyboard dibuka.
+   ===================================================== */
+
+@media (max-height: 560px) {
+
+    html,
+    body {
+        height: auto;
+        min-height: 100%;
+        overflow: auto;
+    }
+
+    .app {
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
+    }
+
+    .chat {
+        height: 240px;
+    }
+
+    .chat-input input {
+        font-size: 16px;
     }
 }
