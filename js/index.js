@@ -1,5 +1,5 @@
 import { db, auth, HOST_UID } from './firebase.js';
-import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint, userAvatarHtml, applyFsTitleY } from './utils.js';
+import { escapeHtml, isDesktopPointer, requestDocumentFullscreen, showFullscreenHint, userAvatarHtml, avatarHtml, guardAvatarImages, applyFsTitleY } from './utils.js';
 import {
   ref, onValue, onChildAdded, onChildRemoved, push, update, get, serverTimestamp, onDisconnect as fbOnDisconnect, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
@@ -49,11 +49,22 @@ let currentState = {};
 let lastLoadedUrl = '';
 let inited = false;
 let presenceBound = false;
+// true setelah tombol Keluar ditekan: mencegah handler reconnect .info/connected
+// menulis `online: true` lagi di antara update({online:false}) dan
+// onAuthStateChanged(null) — kalau tidak, nama user bisa muncul sesaat lalu
+// hilang lagi (flicker) sebelum tab benar-benar tertutup.
+let leaving = false;
 let watchMode = 'sync';
 let pendingAsyncPos = null;
 let asyncActiveId = null;
 let asyncGapId = null;
 let lastAsyncPlayTry = 0;
+// Deklarasi WAJIB di atas: bindChatInputFocus() + initKeyboardPadding() dipanggil
+// top-level — kalau let di bawah,赋值 terjadi sebelum deklarasi dievaluasi (TDZ →
+// ReferenceError → modul gagal load → halaman kosong).
+let kbBaseHeight = 0;
+let kbTracked = false;
+let kbFollowStop = null;
 
 // ===== HELPERS =====
 function isYoutubeUrl(url) {
@@ -198,20 +209,23 @@ onAuthStateChanged(auth, user => {
 async function registerViewer(user) {
   const userRef = ref(db, 'users/' + user.uid);
 
+  // `photo` HANYA ditulis kalau sesi ini benar-benar punya photoURL — kalau
+  // tidak, foto yang sudah tervalidasi akan tertimpa jadi string kosong dan
+  // tidak kembali sampai ada sesi dengan photoURL non-kosong.
   await update(userRef, {
     name: user.displayName || 'Penonton',
     email: null,
-    photo: user.photoURL || '',
     role: 'viewer',
     online: true,
-    lastSeen: serverTimestamp()
+    lastSeen: serverTimestamp(),
+    ...(user.photoURL ? { photo: user.photoURL } : {})
   });
 
   if (presenceBound) return;
   presenceBound = true;
 
   onValue(ref(db, '.info/connected'), snap2 => {
-    if (snap2.val() && currentUser) {
+    if (snap2.val() && currentUser && !leaving) {
       update(ref(db, 'users/' + currentUser.uid), { online: true });
       fbOnDisconnect(ref(db, 'users/' + currentUser.uid)).update({
         online: false,
@@ -242,8 +256,9 @@ async function initAll() {
   startNextFilmCountdown();
   initFullscreen();
 
-  $('btnLogout').addEventListener('click', async () => {
-    lastLoadedUrl = '';
+$('btnLogout').addEventListener('click', async () => {
+  leaving = true;
+  lastLoadedUrl = '';
     initialSeekDone = false;
     userVideoPlayer.pause();
     stopVideoElements();
@@ -255,8 +270,37 @@ async function initAll() {
   });
 }
 
+// ===== SUBTITLE =====
+// Stream HLS yang punya `TYPE=SUBTITLES DEFAULT=YES` (mis. Red Bull TV) akan
+// otomatis dirender hls.js: default hls.js `subtitleDisplay = true` → track di-set
+// `mode: 'showing'`. Jadi harus dimatikan eksplisit (hls.subtitleDisplay = false).
+// Mode 'hidden' tetap mem-parse cue, jadi tidak memblokir akses `activeCues` nanti.
+function suppressSubtitles(video) {
+  if (!video || suppressSubtitles.done === video) return;
+  suppressSubtitles.done = video;
+
+  const apply = () => {
+    const list = video.textTracks;
+    if (!list) return;
+    // Syarat 'showing' membuat rantai event terputus: menulis 'hidden' memicu
+    // 'change' sekali lagi, tapi pass berikutnya tidak menulis apa pun → konvergen
+    // (terukur: 2 event per penyalaan ulang, konstan, tidak tumbuh).
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].mode === 'showing') list[i].mode = 'hidden';
+    }
+  };
+
+  apply();
+  if (video.textTracks && video.textTracks.addEventListener) {
+    video.textTracks.addEventListener('change', apply);
+  }
+}
+
 // ===== PLAYER (sinkron saja, tanpa kontrol) =====
 function initPlayer() {
+  // Jaring pengaman untuk HLS native (Safari/iOS, tanpa hls.js)
+  suppressSubtitles(userVideoPlayer);
+
   userVideoPlayer.addEventListener('contextmenu', e => e.preventDefault());
 
   // Jangan biarkan browser ambil alih fullscreen ke elemen <video> (dbl-klik / dbl-tap):
@@ -369,6 +413,9 @@ function loadVideo(url) {
         backBufferLength: 30,
         startFragPrefetch: true
       });
+      // WAJIB di instance, BUKAN di object config di atas (subtitleDisplay bukan
+      // key HlsConfig → kalau ditaruh di config akan diabaikan diam-diam)
+      hls.subtitleDisplay = false;
       hls.loadSource(url);
       hls.attachMedia(userVideoPlayer);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -651,7 +698,7 @@ function updateNextFilmInfo() {
 
   const nextItem = playlistData.find(item => {
     if (!item.scheduledTime) return false;
-    if (item.status === 'completed' || item.status === 'active') return false;
+    if (item.status === 'completed') return false;
     if (currentState.activePlaylistId === item.id) return false;
     return new Date(item.scheduledTime).getTime() > now;
   });
@@ -686,31 +733,48 @@ function updateNextFilmInfo() {
 }
 
 // ===== VIEWERS =====
-function initViewers() {
-  onValue(ref(db, 'users'), snap => {
-    const users = snap.val() || {};
-    let count = 0;
-    let hostHtml = '';
-    let userHtml = '';
+// Presence bersifat INSTAN: begitu `online: false` (tombol Keluar, tab ditutup,
+// atau koneksi putus) user langsung hilang dari daftar. `lastSeen` tetap diisi
+// serverTimestamp() saat disconnect karena rules `users/{uid}.validate` mewajibkan
+// key name+online+lastSeen ada — sekarang hanya jadi jejak audit, bukan jeda.
+let viewersSig = '';
 
-    Object.values(users).forEach(u => {
-      if (!u.online) return;
-      count++;
-      if (u.role === 'host') {
-        hostHtml = '<div class="viewer-item-host">' + userAvatarHtml(u) +
-          '<span class="badge">HOST</span></div>';
-      } else {
-        userHtml += '<div class="viewer-item">' + userAvatarHtml(u) +
-          '<span class="online-dot"></span></div>';
-      }
-    });
+function renderViewers(users) {
+  let count = 0;
+  let hostHtml = '';
+  let userHtml = '';
 
-    userViewerCountTop.textContent = count;
-    userViewerCountBar.textContent = count;
-    if (userChatCount) userChatCount.textContent = count;
-    hostViewerSection.innerHTML = hostHtml || '<div class="viewer-empty">Host offline</div>';
-    viewerListSection.innerHTML = userHtml || '<div class="viewer-empty">Belum ada penonton</div>';
+  Object.entries(users || {}).forEach(([uid, u]) => {
+    if (!u || !u.online) return;
+    count++;
+    // Host ditentukan dari HOST_UID, bukan role di DB: record lama/salah
+    // dengan role 'host' tidak boleh membuat user lain hilang dari daftar.
+    if (uid === HOST_UID) {
+      hostHtml = '<div class="viewer-item-host">' + userAvatarHtml(u) +
+        '<span class="badge">HOST</span></div>';
+    } else {
+      userHtml += '<div class="viewer-item">' + userAvatarHtml(u) +
+        '<span class="online-dot"></span></div>';
+    }
   });
+
+  // lastSeen/role tidak ikut dirender: kalau hanya itu yang berubah (setiap
+  // reconnect), jangan rebuild seluruh innerHTML daftar penonton.
+  const sig = count + '|' + hostHtml + '|' + userHtml;
+  if (sig === viewersSig) return;
+  viewersSig = sig;
+
+  userViewerCountTop.textContent = count;
+  userViewerCountBar.textContent = count;
+  if (userChatCount) userChatCount.textContent = count;
+  hostViewerSection.innerHTML = hostHtml || '<div class="viewer-empty">Host offline</div>';
+  viewerListSection.innerHTML = userHtml || '<div class="viewer-empty">Belum ada penonton</div>';
+  guardAvatarImages(hostViewerSection);
+  guardAvatarImages(viewerListSection);
+}
+
+function initViewers() {
+  onValue(ref(db, 'users'), snap => renderViewers(snap.val() || {}));
 }
 
 // ===== CHAT (tanpa tombol hapus) =====
@@ -719,12 +783,60 @@ function updateChatMsgCount() {
   if (chatMsgCount) chatMsgCount.textContent = '(' + n + ' pesan)';
 }
 
+function isKeyboardOpen() {
+  const vv = window.visualViewport;
+  if (!vv || !kbTracked) return false;
+  return kbBaseHeight - vv.height > 80;
+}
+
+// Hanya scroll kalau input benar-benar tertutup viewport (idempotent, tidak
+// menarik scroll saat user sedang naik scroll untuk baca pesan lama).
+function ensureChatInputVisible() {
+  const vv = window.visualViewport;
+  const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  const rect = chatInput.getBoundingClientRect();
+  if (rect.bottom > bottom - 8) {
+    chatInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+// Pending listener "follow keyboard animation" — dibuat per focus, auto-lepas
+function stopKbFollow() {
+  if (!kbFollowStop) return;
+  clearTimeout(kbFollowStop.timer);
+  if (typeof kbFollowStop.vv.removeEventListener === 'function') {
+    kbFollowStop.vv.removeEventListener('resize', kbFollowStop.onResize);
+  }
+  kbFollowStop = null;
+}
+
 function bindChatInputFocus() {
   chatInput.addEventListener('focus', () => {
     hideAllToasts();
-    setTimeout(() => {
-      chatInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }, 300);
+    ensureChatInputVisible();
+
+    // Ikuti settle-nya animasi keyboard (300ms fixed prone to race) — listener
+    // sekali-pakai: lepas sendiri setelah 700ms tanpa resize.
+    const vv = window.visualViewport;
+    if (!vv || typeof vv.addEventListener !== 'function') {
+      setTimeout(ensureChatInputVisible, 300);
+      return;
+    }
+
+    stopKbFollow();
+
+    const follow = {
+      vv: vv,
+      timer: 0,
+      onResize: () => {
+        ensureChatInputVisible();
+        clearTimeout(follow.timer);
+        follow.timer = setTimeout(stopKbFollow, 700);
+      }
+    };
+    follow.timer = setTimeout(stopKbFollow, 700);
+    kbFollowStop = follow;
+    vv.addEventListener('resize', follow.onResize);
   });
 
   const chatInputWrap = document.querySelector('.chat-input');
@@ -733,11 +845,12 @@ function bindChatInputFocus() {
       hideAllToasts();
       if (e.target.closest('button')) return;
       if (e.target !== chatInput) e.preventDefault();
+      // Kalau masih focused tapi keyboard sudah ditutup (back gesture Android /
+      // tap luar iOS tidak men-blur) → focus() tidak fire lagi, wajib blur dulu.
+      if (document.activeElement === chatInput && !isKeyboardOpen()) chatInput.blur();
       chatInput.focus();
     });
   }
-
-  chatInput.addEventListener('click', () => chatInput.focus());
 
   const chatEl = document.querySelector('.chat');
   if (chatEl) {
@@ -750,24 +863,34 @@ function initKeyboardPadding() {
   initKeyboardPadding.done = true;
 
   const vv = window.visualViewport;
-  if (!vv) return;
+  if (!vv || typeof vv.addEventListener !== 'function') return;
 
-  const mq = window.matchMedia('(max-width: 900px)');
-  let kbBase = vv.height;
+  // Width OR height: HP/tablet landscape (>900px) & jendela pendek juga butuh
+  // ruang scroll — tanpa ini halaman terkunci overflow:hidden dan input chat
+  // tidak bisa digulir ke atas keyboard.
+  const mq = window.matchMedia('(max-width: 900px), (max-height: 560px)');
+  kbBaseHeight = vv.height;
+  kbTracked = true;
 
   function apply() {
-    if (!mq.matches || document.fullscreenElement) {
+    if (!mq.matches) {
+      // Kembali ke layout tinggi → reset basis, jangan ada padding sisa
+      kbBaseHeight = vv.height;
       document.body.style.paddingBottom = '';
       return;
     }
-    if (vv.height > kbBase - 80) kbBase = Math.max(kbBase, vv.height);
-    const kb = Math.max(0, kbBase - vv.height);
+    if (document.fullscreenElement) {
+      document.body.style.paddingBottom = '';
+      return;
+    }
+    if (vv.height > kbBaseHeight - 80) kbBaseHeight = Math.max(kbBaseHeight, vv.height);
+    const kb = Math.max(0, kbBaseHeight - vv.height);
     document.body.style.paddingBottom = kb > 80 ? Math.ceil(kb) + 'px' : '16px';
   }
 
   vv.addEventListener('resize', apply);
   window.addEventListener('orientationchange', () => {
-    setTimeout(() => { kbBase = vv.height; apply(); }, 300);
+    setTimeout(() => { kbBaseHeight = vv.height; apply(); }, 300);
   });
   document.addEventListener('fullscreenchange', apply);
   if (mq.addEventListener) mq.addEventListener('change', apply);
@@ -780,7 +903,11 @@ function initChat() {
   initChat.done = true;
 
   btnChatSend.addEventListener('click', sendChat);
-  chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+  chatInput.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    sendChat();
+  });
 
   const chatQuery = query(ref(db, 'chat'), limitToLast(200));
 
@@ -834,11 +961,7 @@ function addChatMessage(msg, msgId) {
   const time = msg.timestamp
     ? new Date(msg.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
     : '';
-  const initial = escapeHtml(String(msg.name || '?').charAt(0).toUpperCase());
-  const photoHtml =
-    '<div class="message-avatar">' + initial +
-    (msg.photo ? '<img src="' + escapeHtml(msg.photo) + '" alt="" onerror="this.remove()">' : '') +
-    '</div>';
+  const photoHtml = avatarHtml(msg.name, msg.photo);
 
   el.innerHTML =
     photoHtml +
@@ -852,6 +975,7 @@ function addChatMessage(msg, msgId) {
 
   if (msgId) chatEls.set(msgId, el);
   chatMessages.appendChild(el);
+  guardAvatarImages(el);
 
   while (chatMessages.children.length > 200) {
     const first = chatMessages.firstChild;

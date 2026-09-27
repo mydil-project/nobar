@@ -7,11 +7,41 @@ export function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+// Avatar (huruf + foto) — SATU sumber kebenaran untuk chat & daftar penonton.
+// Huruf selalu ada di dalam .message-avatar, foto menimpanya (position:absolute),
+// dan onerror menghapus foto kalau URL gagal dimuat → huruf tetap tampil.
+// Jangan emit <img> polos: URL foto Google yang gagal = ikon gambar rusak / kotak
+// kosong yang menutupi huruf, bukan "profil tidak tampil".
+export function avatarHtml(name, photo) {
+  const initial = escapeHtml(String(name || '?').charAt(0).toUpperCase());
+  const img = photo
+    ? '<img src="' + escapeHtml(photo) + '" alt="" onerror="this.remove()">'
+    : '';
+  return '<div class="message-avatar">' + initial + img + '</div>';
+}
+
 export function userAvatarHtml(user) {
-  const photo = user.photo
-    ? '<img src="' + escapeHtml(user.photo) + '" alt="">'
-    : '<div class="message-avatar">' + escapeHtml(String(user.name || '?').charAt(0).toUpperCase()) + '</div>';
-  return photo + '<span class="name">' + escapeHtml(user.name || '?') + '</span>';
+  return avatarHtml(user.name, user.photo) +
+    '<span class="name">' + escapeHtml(user.name || '?') + '</span>';
+}
+
+// Jaring pengaman gambar, dipasang SETELAH html masuk DOM (innerHTML).
+// Atribut onerror inline punya celah: kalau URL-nya sudah ada di cache dan gagal,
+// event 'error' bisa menyala sebelum handler terpasang sehingga tidak pernah
+// dijalankan dan huruf di baliknya tidak pernah terekspos. addEventListener +
+// cek `complete && naturalWidth === 0` menutup celah itu.
+export function guardAvatarImages(root) {
+  if (!root || !root.querySelectorAll) return;
+  const imgs = root.querySelectorAll('img'); // NodeList statis → aman dihapus saat loop
+  for (let i = 0; i < imgs.length; i++) {
+    const img = imgs[i];
+    // Penanda pakai properti JS (bukan dataset) supaya proteksi tetap dipasang
+    // di browser lama yang tidak punya HTMLElement.dataset.
+    if (img.avatarGuard) continue;
+    img.avatarGuard = true;
+    img.addEventListener('error', () => img.remove(), { once: true });
+    if (img.complete && img.naturalWidth === 0) img.remove();
+  }
 }
 
 export const FS_TITLE_Y_DEFAULT = 4;

@@ -1,6 +1,6 @@
 import { db, auth, provider, HOST_UID } from './firebase.js';
 import {
-  ref, update, set, serverTimestamp
+  ref, update, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import {
   signInWithPopup, signInWithRedirect, onAuthStateChanged
@@ -20,12 +20,16 @@ async function routeAfterLogin(user) {
     const userRef = ref(db, 'users/' + user.uid);
 
     if (user.uid === HOST_UID) {
-      await set(userRef, {
+      // `update` (bukan `set`) supaya foto yang sudah benar tidak terhapus tiap
+      // login; `email: null` menghapus key email legacy. `photo` hanya ditulis
+      // kalau sesi ini punya photoURL.
+      await update(userRef, {
         name: user.displayName || 'Host',
-        photo: user.photoURL || '',
+        email: null,
         role: 'host',
         online: true,
-        lastSeen: serverTimestamp()
+        lastSeen: serverTimestamp(),
+        ...(user.photoURL ? { photo: user.photoURL } : {})
       });
       location.replace('host.html');
       return;
@@ -34,10 +38,10 @@ async function routeAfterLogin(user) {
     await update(userRef, {
       name: user.displayName || 'Penonton',
       email: null,
-      photo: user.photoURL || '',
       role: 'viewer',
       online: true,
-      lastSeen: serverTimestamp()
+      lastSeen: serverTimestamp(),
+      ...(user.photoURL ? { photo: user.photoURL } : {})
     });
 
     location.replace('index.html');
